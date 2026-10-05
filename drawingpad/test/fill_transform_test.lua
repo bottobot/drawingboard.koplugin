@@ -1,13 +1,13 @@
 --[[--
-路径填充旋转/缩放不穿模回归测试(src_points 源顶点重算):
-1. 路径填充收笔保存 el.src_points
-2. 连续旋转 8×30°:填充像素始终贴着变换后源顶点多边形(越界 >1.5px 的像素必须为 0)
-3. 缩放(放大/缩小):spans 致密且仍贴合变换后多边形
-4. 移动后旋转:填充跟着源顶点走(不跳回旧位置)
-5. _cloneElement/_restoreGeom 对 src_points 深拷贝(撤销快照不别名)
-6. 旧数据/tap 洪水填充(无 src_points)旋转仍走原 span 反建路径
+Path fill rotate/scale no-poke-through regression test (recompute from src_points source vertices):
+1. A path fill pen-up stores el.src_points
+2. 8 consecutive 30° rotations: fill pixels always hug the transformed source-vertex polygon (pixels >1.5px outside must be 0)
+3. Scaling (up/down): spans are dense and still fit the transformed polygon
+4. Rotate after move: the fill follows the source vertices (doesn't jump back to the old position)
+5. _cloneElement/_restoreGeom deep-copy src_points (undo snapshots don't alias)
+6. Old data/tap flood fills (no src_points) still take the original span-rebuild path when rotated
 
-运行(从 KOReader 根目录):
+Run (from the KOReader root):
     ./koreader-emulator-x86_64-linux-gnu-debug/koreader/luajit plugins/drawingboard.koplugin/drawingpad/test/fill_transform_test.lua
 --]]
 local __t_src = debug.getinfo(1, "S").source
@@ -42,7 +42,7 @@ local function check(cond, msg)
     end
 end
 
--- ---- 几何工具 ----
+-- ---- Geometry helpers ----
 local function polyBBox(pts)
     local x0, y0, x1, y1 = math.huge, math.huge, -math.huge, -math.huge
     for _, p in ipairs(pts) do
@@ -54,7 +54,7 @@ local function polyBBox(pts)
     return x0, y0, x1, y1
 end
 
--- 偶奇规则点在多边形内
+-- Even-odd rule point in polygon
 local function pointInPoly(x, y, pts)
     local inside = false
     local n = #pts
@@ -90,7 +90,7 @@ local function polyDist(x, y, pts)
     return d
 end
 
--- 填充像素中离多边形边界 >tol 却在多边形外的数量(穿模量)
+-- Number of fill pixels farther than tol outside the polygon boundary (poke-through amount)
 local function countOutside(el, pts, tol)
     local n = 0
     for _, sp in ipairs(el.spans) do
@@ -103,7 +103,7 @@ local function countOutside(el, pts, tol)
     return n
 end
 
--- 行集致密(无空行)
+-- Row set is dense (no empty rows)
 local function spansDense(el)
     local ys = {}
     local ymin, ymax = math.huge, -math.huge
@@ -117,11 +117,11 @@ local function spansDense(el)
     return n > 0 and n == ymax - ymin + 1
 end
 
--- ============ 1. 路径填充保存源顶点 ============
+-- ============ 1. Path fill stores source vertices ============
 do
     local c = newCanvas()
     c:_setTool("fill")
-    c:_toggleFillMode() -- path 模式
+    c:_toggleFillMode() -- path mode
     c:onPan(nil, { pos = { x = 100, y = 300 }, start_pos = { x = 100, y = 300 } })
     c:onPan(nil, { pos = { x = 200, y = 300 }, start_pos = { x = 100, y = 300 } })
     c:onPan(nil, { pos = { x = 200, y = 400 }, start_pos = { x = 100, y = 300 } })
@@ -137,7 +137,7 @@ do
         "initial spans inside src polygon (outside>1.5px: "
         .. countOutside(el, el.src_points, 1.5) .. ")")
 
-    -- ============ 2. 连续旋转 8×30° 不穿模 ============
+    -- ============ 2. 8 consecutive 30° rotations without poke-through ============
     local x0, y0, x1, y1 = polyBBox(el.src_points)
     local cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
     local r0max = 0
@@ -162,7 +162,7 @@ do
     check(rr <= r0max + 1.5, "fill radius stable (" ..
         string.format("%.1f", rr) .. " <= " .. string.format("%.1f", r0max) .. "+1.5)")
 
-    -- ============ 3. 缩放后仍贴合 ============
+    -- ============ 3. Still fits after scaling ============
     local bx0, by0, bx1, by1 = polyBBox(el.src_points)
     local sb = { x0 = math.floor(bx0), y0 = math.floor(by0), x1 = math.ceil(bx1), y1 = math.ceil(by1) }
     local nb = { x0 = sb.x0, y0 = sb.y0, x1 = sb.x0 + (sb.x1 - sb.x0) * 1.5, y1 = sb.y0 + (sb.y1 - sb.y0) * 1.5 }
@@ -178,7 +178,7 @@ do
     check(countOutside(el, el.src_points, 1.5) == 0, "scale down fill hugs polygon (outside: "
         .. countOutside(el, el.src_points, 1.5) .. ")")
 
-    -- ============ 4. 移动后旋转跟手 ============
+    -- ============ 4. Rotation after move follows ============
     c:_moveElement(el, 50, 25)
     c:_cacheBBox(el)
     c:_rotateElement(el, math.pi / 4, (el._bbox.x0 + el._bbox.x1) / 2, (el._bbox.y0 + el._bbox.y1) / 2)
@@ -187,7 +187,7 @@ do
     check(math.abs(el._bbox.x0 - math.floor(mx0)) <= 2 and math.abs(el._bbox.y1 - math.ceil(my1)) <= 2,
         "rotate after move follows src_points")
 
-    -- ============ 5. 快照/克隆深拷贝 ============
+    -- ============ 5. Snapshot/clone deep copy ============
     local clone = c:_cloneElement(el)
     check(clone.src_points[1] ~= el.src_points[1], "clone deep-copies src_points")
     local snap = c:_cloneElement(el)
@@ -202,10 +202,10 @@ do
         "mutating el.src_points does not pollute snapshot")
 end
 
--- ============ 6. tap 洪水填充(无 src_points)旧路径仍可用 ============
+-- ============ 6. tap flood fill (no src_points) old path still works ============
 do
     local c = newCanvas()
-    c:_setTool("fill") -- 默认 tap 模式
+    c:_setTool("fill") -- default tap mode
     c:onPan(nil, { pos = { x = 150, y = 200 }, start_pos = { x = 150, y = 200 } })
     c:onPanRelease(nil, { pos = { x = 150, y = 200 } })
     local el = c.elements[1]

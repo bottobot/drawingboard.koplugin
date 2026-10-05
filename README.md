@@ -1,5 +1,3 @@
-**English** | [简体中文](./README_zh.md)
-
 # Drawingboard for KOReader
 
 A drawing pad for KOReader — sketch and take notes on your e-reader.
@@ -12,7 +10,18 @@ The interface is deliberately minimal — a single toolbar over a fullscreen can
 
 Refresh behaviour is tuned for e-ink: partial refreshes with region merging and throttling avoid full-screen flashes and ghosting. It also works around real-device quirks such as Kindle startup-script restart loops and framebuffer contention.
 
-The plugin appears as **Drawing Board** (or **绘图板** on Chinese-language systems) in the KOReader menu.
+The plugin appears as **Drawing Board** in the KOReader menu.
+
+## Kobo fork
+
+This is a modified fork of [eznas/drawingboard.koplugin](https://github.com/eznas/drawingboard.koplugin).
+**Notice of modification (AGPL-3.0 section 5):** this version was modified in 2026-10 for Kobo stylus
+support and an English-only UI. It is not the upstream release.
+
+Changes compared with upstream:
+
+- **English-only UI**: the Chinese menu dictionary, the automatic language detection and the
+  menu-language switch were removed; `README_zh.md` was dropped.
 
 ## Screenshots
 

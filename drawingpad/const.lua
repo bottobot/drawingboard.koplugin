@@ -97,10 +97,9 @@ local SETTING_KEYS = {
     "alpha_blend",
     "tip", "save_folder",
     "font", "font_size",
-    "menu_lang",
 }
 
--- v62n: UI name tables use English as the single source (Chinese via i18n dict lookup, same approach as plugin_manager)
+-- v62n: UI name tables use English as the single source (the UI is English-only)
 local TOOL_NAMES = {
     brush = "Brush",
     eraser = "Eraser",

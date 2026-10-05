@@ -1,14 +1,14 @@
 --[[--
-绘图板 headless 渲染自测:
-画直线/矩形/圆/圆弧/粗笔折线/橡皮擦除 → writePNG → 校验 PNG magic;
-再尝试构造 DrawingCanvas widget 并打印布局尺寸(工具栏高度等,供核对)。
+Drawing board headless rendering self-test:
+draw line/rectangle/circle/arc/thick polyline/eraser -> writePNG -> check the PNG magic;
+then try to construct the DrawingCanvas widget and print layout sizes (toolbar height etc., for verification).
 
-运行(从 KOReader 根目录):
+Run (from the KOReader root):
     ./koreader-emulator-x86_64-linux-gnu-debug/koreader/luajit plugins/drawingboard.koplugin/drawingpad/test/render_test.lua
 --]]
 
--- 绘图板模块已随插件移入 plugins/drawingboard.koplugin/drawingpad/:
--- 测试不经 pluginloader,自定位插件根注入 package.path,使 require("drawingpad.*") 可解析
+-- The drawing board modules moved into plugins/drawingboard.koplugin/drawingpad/ with the plugin:
+-- tests don't go through pluginloader, so self-locate the plugin root and inject package.path so require("drawingpad.*") resolves
 local __t_src = debug.getinfo(1, "S").source
 local __t_dir = __t_src:match("^@(.*)[/\\][^/\\]*$") or "."
 local __t_plugin = __t_dir:match("^(.*)[/\\]drawingpad[/\\]test$") or __t_dir
@@ -28,17 +28,17 @@ bb:paintRect(0, 0, W, H, Blitbuffer.COLOR_WHITE)
 local black = Blitbuffer.gray(1.0)
 local gray = Blitbuffer.gray(0.5)
 
--- 画笔折线(粗 8)
+-- Brush polyline (width 8)
 shapes.polyline(bb, { { x = 10, y = 20 }, { x = 60, y = 80 }, { x = 120, y = 40 }, { x = 180, y = 90 } }, 8, black)
--- 直线(粗 4)
+-- Line (width 4)
 shapes.thickLine(bb, 10, 110, 300, 110, 4, gray)
--- 矩形(粗 6)
+-- Rectangle (width 6)
 shapes.rect(bb, 20, 130, 140, 220, 6, black)
--- 圆形(粗 4)
+-- Circle (width 4)
 shapes.circle(bb, 220, 170, 45, 4, gray)
--- 橡皮(白,粗 12):在折线上擦一段
+-- Eraser (white, width 12): erase a section of the polyline
 shapes.polyline(bb, { { x = 40, y = 45 }, { x = 70, y = 60 }, { x = 100, y = 50 } }, 12, Blitbuffer.COLOR_WHITE)
--- 越界安全:完全在画布外的点不应报错
+-- Out-of-bounds safety: points entirely outside the canvas must not error
 shapes.thickLine(bb, -50, -50, -10, -10, 4, black)
 
 local out = "/tmp/drawingpad_test.png"
@@ -58,7 +58,7 @@ if magic ~= expected then
 end
 print("PASS: shapes rendered, PNG magic OK ->", out)
 
--- 圆完整性:画完整圆,检查上/下/左/右四点极值在描边上
+-- Circle completeness: draw a full circle, check the top/bottom/left/right extreme points are on the outline
 local ok_circ, err_circ = pcall(function()
     local bbc = Blitbuffer.new(200, 200, Blitbuffer.TYPE_BB8)
     bbc:paintRect(0, 0, 200, 200, Blitbuffer.COLOR_WHITE)
@@ -80,28 +80,28 @@ else
     os.exit(1)
 end
 
--- 实心图形 + 矩形框橡皮:像素级验证
+-- Filled shapes + rectangle box eraser: pixel-level verification
 local ok_fill, err_fill = pcall(function()
     local bbf = Blitbuffer.new(100, 100, Blitbuffer.TYPE_BB8)
     bbf:paintRect(0, 0, 100, 100, Blitbuffer.COLOR_WHITE)
     local black = Blitbuffer.gray(1.0)
-    -- 实心矩形 / 实心圆(填充 + 描边)
+    -- Filled rectangle / filled circle (fill + outline)
     shapes.drawElement(bbf, { kind = "rect", x0 = 10, y0 = 10, x1 = 60, y1 = 60, filled = true, width = 4 }, black)
     shapes.drawElement(bbf, { kind = "circle", cx = 80, cy = 30, r = 15, filled = true, width = 2 }, black)
-    -- 空心矩形:中心应为白(255)
+    -- Hollow rectangle: the centre should be white (255)
     shapes.drawElement(bbf, { kind = "rect", x0 = 70, y0 = 60, x1 = 95, y1 = 90, filled = false, width = 2 }, black)
     local function grayAt(x, y)
         local px = bbf:getPixel(x, y)
         return px and px.a
     end
-    local c_rect = grayAt(35, 35)  -- 实心矩形中心 → 黑(0)
-    local c_circ = grayAt(80, 30)  -- 实心圆圆心 → 黑(0)
-    local c_hollow = grayAt(82, 75) -- 空心矩形中心 → 白(255)
+    local c_rect = grayAt(35, 35)  -- filled rectangle centre -> black (0)
+    local c_circ = grayAt(80, 30)  -- filled circle centre -> black (0)
+    local c_hollow = grayAt(82, 75) -- hollow rectangle centre -> white (255)
     if c_rect ~= 0 then error("filled rect center not black: " .. tostring(c_rect)) end
     if c_circ ~= 0 then error("filled circle center not black: " .. tostring(c_circ)) end
     if c_hollow ~= 255 then error("hollow rect center not white: " .. tostring(c_hollow)) end
     print("pixels: filled rect/circle centers =", c_rect, c_circ, ", hollow rect center =", c_hollow)
-    -- 矩形框橡皮:白色实心矩形擦除
+    -- Rectangle box eraser: white filled rectangle erase
     shapes.drawElement(bbf, { kind = "rect", x0 = 20, y0 = 20, x1 = 50, y1 = 50, filled = true, gray = 0, width = 2 }, Blitbuffer.COLOR_WHITE)
     local c_eras = grayAt(35, 35)
     if c_eras ~= 255 then error("rect eraser center not white: " .. tostring(c_eras)) end
@@ -114,8 +114,8 @@ else
     os.exit(1)
 end
 
--- 尝试构造 DrawingCanvas,打印布局尺寸供核对
--- (构造 widget 需要与 tools/wbuilder.lua 相同的前置初始化)
+-- Try to construct DrawingCanvas and print layout sizes for verification
+-- (constructing the widget needs the same pre-initialisation as tools/wbuilder.lua)
 local ok_canvas, err = pcall(function()
     G_defaults = require("luadefaults"):open()
     local DataStorage = require("datastorage")
@@ -133,14 +133,14 @@ local ok_canvas, err = pcall(function()
 end)
 if ok_canvas then
     print("PASS: DrawingCanvas construct OK")
-    -- 文字渲染(默认字体来自 fonts 目录,失败只告警)
+    -- Text rendering (default font from the fonts directory, failure only warns)
     local ok_text, err_text = pcall(function()
         local DrawingCanvas = require("drawingpad.drawing_canvas")
         local canvas = DrawingCanvas:new{ on_close = function() end }
         print("default font:", canvas.font)
         canvas:_drawTextTo(canvas.canvas_bb, {
             kind = "text", x = 10, y = 30,
-            text = "绘图板 DrawingPad 123",
+            text = "Drawing board DrawingPad 123",
             font = canvas.font, size = 24, gray = 1.0,
         })
         local out2 = "/tmp/drawingpad_text_test.png"
@@ -155,25 +155,25 @@ if ok_canvas then
         end
     end)
     if not ok_text then
-        print("WARN: text render failed (GUI 环境再验):", tostring(err_text))
+        print("WARN: text render failed (re-check in a GUI environment):", tostring(err_text))
     end
-    -- 最小化/恢复:画布恒定全屏、坐标屏幕锚定(内容无位移)、头部遮挡/露出
+    -- Minimise/restore: canvas always full-screen, coordinates screen-anchored (content doesn't shift), header covers/uncovers
     local ok_min, err_min = pcall(function()
         local DrawingCanvas = require("drawingpad.drawing_canvas")
         local canvas = DrawingCanvas:new{ on_close = function() end }
-        -- 画一笔进元素栈
+        -- Draw a stroke into the element stack
         table.insert(canvas.elements, {
             kind = "line", x0 = 10, y0 = 10, x1 = 100, y1 = 100, gray = 1.0, width = 4,
         })
         canvas:_renderAll()
-        local full_h = canvas.canvas_h -- 恒定全屏 720
-        -- 内容包围盒(导出裁剪用):line (10,10)-(100,100) + 8px 边距
+        local full_h = canvas.canvas_h -- always full-screen 720
+        -- Content bounding box (for export cropping): line (10,10)-(100,100) + 8px margin
         local bbox = canvas:_contentBBox()
         if not (bbox and bbox.x == 2 and bbox.y == 2 and bbox.w == 107 and bbox.h == 107) then
             error("bbox check failed: " .. tostring(bbox and (bbox.x .. "," .. bbox.y .. " " .. bbox.w .. "x" .. bbox.h)))
         end
         print("content bbox:", bbox.w, "x", bbox.h)
-        -- 画布坐标 = 屏幕坐标:同一屏幕坐标在两种模式下映射一致 → 无位移
+        -- Canvas coordinates = screen coordinates: the same screen coordinate maps identically in both modes -> no shift
         local x1, y1 = canvas:_toCanvas(30, 200)
         canvas:_setMinimized(true)
         if canvas._minimized ~= true or canvas.canvas_h ~= full_h or canvas.header_h ~= 0 then
@@ -181,7 +181,7 @@ if ok_canvas then
                 .. " canvas_h=" .. tostring(canvas.canvas_h))
         end
         print("minimized: header_h=", canvas.header_h, "canvas=", canvas.canvas_w, "x", canvas.canvas_h)
-        -- 最小化后顶部(原工具栏区域)可画
+        -- After minimising the top (former toolbar area) is drawable
         local tx, ty = canvas:_toCanvas(30, 30)
         if not (tx == 30 and ty == 30) then
             error("minimized top area not drawable: ", tostring(tx), tostring(ty))
@@ -189,20 +189,20 @@ if ok_canvas then
         local x2, y2 = canvas:_toCanvas(30, 200)
         canvas:_setMinimized(false)
         local x3, y3 = canvas:_toCanvas(30, 200)
-        -- v57c 自制工具栏高度可调,header 断言改相对(= 工具栏+状态栏)而非硬编码像素
+        -- v57c custom toolbar height is adjustable, header assertions are relative (= toolbar + status bar) instead of hardcoded pixels
         if canvas._minimized ~= false
             or canvas.header_h ~= canvas.toolbar_h + canvas.status_h then
             error("restore failed: header=" .. tostring(canvas.header_h)
                 .. " toolbar=" .. tostring(canvas.toolbar_h)
                 .. " status=" .. tostring(canvas.status_h))
         end
-        -- 无位移:三种状态映射必须一致
+        -- No shift: the mapping must be identical in all three states
         if not (x1 == 30 and y1 == 200 and x2 == 30 and y2 == 200 and x3 == 30 and y3 == 200) then
             error("no-shift check failed: " .. tostring(x1) .. "," .. tostring(y1)
                 .. " / " .. tostring(x2) .. "," .. tostring(y2)
                 .. " / " .. tostring(x3) .. "," .. tostring(y3))
         end
-        -- 可见模式下底部(工具栏/状态栏)遮挡区不可画(顶部已可画)
+        -- In visible mode the bottom (toolbar/status bar) covered area is not drawable (the top already is)
         if canvas:_toCanvas(30, 30) == nil then
             error("visible mode top area should be drawable (bottom toolbar)")
         end
@@ -218,7 +218,7 @@ if ok_canvas then
         print("FAIL: minimize/restore:", tostring(err_min))
         os.exit(1)
     end
-    -- 元素刷新区域:圆应覆盖完整范围(圆心±半径+线宽),而非仅锚点-释放点包围盒
+    -- Element refresh region: a circle should cover its full extent (centre ± radius + line width), not just the anchor-release bounding box
     local ok_reg, err_reg = pcall(function()
         local DrawingCanvas = require("drawingpad.drawing_canvas")
         local canvas = DrawingCanvas:new{ on_close = function() end }
@@ -234,7 +234,7 @@ if ok_canvas then
         print("FAIL: element region:", tostring(err_reg))
         os.exit(1)
     end
-    -- 灰度/粗细长按:切换 固定/随机 模式(反色已被随机分级模型替代)
+    -- Grey/width long-press: toggle fixed/random mode (inversion was replaced by the random levels model)
     local ok_gray, err_gray = pcall(function()
         local DrawingCanvas = require("drawingpad.drawing_canvas")
         local canvas = DrawingCanvas:new{ on_close = function() end }
@@ -265,7 +265,7 @@ if ok_canvas then
         print("FAIL: gray/width random toggle:", tostring(err_gray))
         os.exit(1)
     end
-    -- 快速拖动(swipe)画圆/画线也应落盘
+    -- Fast drags (swipe) drawing circles/lines should also be committed
     local ok_sw, err_sw = pcall(function()
         local DrawingCanvas = require("drawingpad.drawing_canvas")
         local canvas = DrawingCanvas:new{ on_close = function() end }
@@ -287,14 +287,14 @@ if ok_canvas then
         print("FAIL: swipe:", tostring(err_sw))
         os.exit(1)
     end
-    -- 图形工具停留 1s 预览:定时回调生成预览,收笔后清除并落盘
+    -- Shape tool 1s rest preview: the timer callback builds the preview, cleared and committed on pen-up
     local ok_pv, err_pv = pcall(function()
         local DrawingCanvas = require("drawingpad.drawing_canvas")
         local canvas = DrawingCanvas:new{ on_close = function() end }
         canvas:_setTool("circle")
         canvas:_trackShapeAnchor({ pos = { x = 100, y = 300 }, start_pos = { x = 100, y = 300 } })
-        canvas:_scheduleShapePreview(200, 350) -- 模拟继续拖动到 (200,350)
-        canvas:_maybeShowShapePreview()        -- 定时器到点:显示预览
+        canvas:_scheduleShapePreview(200, 350) -- simulate continuing to drag to (200,350)
+        canvas:_maybeShowShapePreview()        -- timer fires: show the preview
         if not (canvas.preview and canvas.preview.kind == "circle") then
             error("preview not shown")
         end
@@ -314,7 +314,7 @@ if ok_canvas then
         print("FAIL: 1s-hold preview:", tostring(err_pv))
         os.exit(1)
     end
-    -- 橡皮删除对象 + 撤销/重做 + 点按删除
+    -- Eraser deletes objects + undo/redo + tap delete
     local ok_er, err_er = pcall(function()
         local DrawingCanvas = require("drawingpad.drawing_canvas")
         local canvas = DrawingCanvas:new{ on_close = function() end }
@@ -322,23 +322,23 @@ if ok_canvas then
         canvas:onSwipe(nil, { pos = { x = 100, y = 300 }, end_pos = { x = 200, y = 350 } })
         canvas:onSwipe(nil, { pos = { x = 300, y = 300 }, end_pos = { x = 380, y = 360 } })
         if #canvas.elements ~= 2 then error("setup failed: " .. #canvas.elements) end
-        -- 框选删除两个圆
+        -- Box-select delete two circles
         canvas:_setTool("eraser")
         canvas.eraser_mode = "rect"
         canvas:_eraseInRect(50, 250, 400, 400)
         if #canvas.elements ~= 0 then error("erase failed: " .. #canvas.elements) end
-        -- 撤销恢复两个圆
+        -- Undo restores the two circles
         canvas:_undo()
         if #canvas.elements ~= 2 then error("undo restore failed: " .. #canvas.elements) end
-        -- 重做再删
+        -- Redo deletes again
         canvas:_redo()
         if #canvas.elements ~= 0 then error("redo erase failed: " .. #canvas.elements) end
-        -- 画第三个圆后点按删除
+        -- Draw a third circle then tap-delete it
         canvas:_setTool("circle")
         canvas:onSwipe(nil, { pos = { x = 100, y = 300 }, end_pos = { x = 200, y = 350 } })
         if #canvas.elements ~= 1 then error("circle3 failed: " .. #canvas.elements) end
         canvas:_setTool("eraser")
-        local ok_tap = canvas:_eraseAt(212, 300) -- 圆右缘(墨迹上)
+        local ok_tap = canvas:_eraseAt(212, 300) -- right edge of the circle (on the ink)
         if not ok_tap or #canvas.elements ~= 0 then
             error("tap erase failed")
         end
@@ -350,19 +350,19 @@ if ok_canvas then
         print("FAIL: eraser object-delete:", tostring(err_er))
         os.exit(1)
     end
-    -- 画笔:hold_release 收笔后快速起笔,不应连到上一笔
+    -- Brush: a fast pen-down after a hold_release pen-up must not join the previous stroke
     local ok_hold, err_hold = pcall(function()
         local DrawingCanvas = require("drawingpad.drawing_canvas")
         local canvas = DrawingCanvas:new{ on_close = function() end }
         canvas:_setTool("brush")
-        -- 第一笔:pan 后以 hold_release 收尾(模拟收笔前短暂停留)
+        -- First stroke: pan then end with hold_release (simulates a brief rest before pen-up)
         canvas:onPan(nil, { pos = { x = 100, y = 300 }, start_pos = { x = 100, y = 300 } })
         canvas:onPan(nil, { pos = { x = 200, y = 350 }, start_pos = { x = 100, y = 300 } })
         canvas:onHoldRelease(nil, { pos = { x = 220, y = 360 } })
         if #canvas.elements ~= 1 or canvas._stroke ~= nil then
             error("hold_release did not finish stroke")
         end
-        -- 第二笔(快速):独立新笔画,起点应为按下点
+        -- Second stroke (fast): an independent new stroke, starting at the touch-down point
         canvas:onPan(nil, { pos = { x = 300, y = 400 }, start_pos = { x = 300, y = 400 } })
         canvas:onPan(nil, { pos = { x = 400, y = 450 }, start_pos = { x = 300, y = 400 } })
         canvas:onPanRelease(nil, { pos = { x = 420, y = 460 } })
@@ -382,17 +382,17 @@ if ok_canvas then
         print("FAIL: hold_release stroke:", tostring(err_hold))
         os.exit(1)
     end
-    -- 橡皮点选:最靠近点击点墨迹的对象(而非包围盒最上层)
+    -- Eraser pick: the object whose ink is nearest the tap point (not the topmost bounding box)
     local ok_pk, err_pk = pcall(function()
         local DrawingCanvas = require("drawingpad.drawing_canvas")
         local canvas = DrawingCanvas:new{ on_close = function() end }
         canvas:_setTool("circle")
-        canvas:onSwipe(nil, { pos = { x = 200, y = 300 }, end_pos = { x = 300, y = 300 } }) -- 圆A 中心(200,300) r=100
+        canvas:onSwipe(nil, { pos = { x = 200, y = 300 }, end_pos = { x = 300, y = 300 } }) -- circle A centre (200,300) r=100
         canvas:_setTool("line")
-        canvas:onSwipe(nil, { pos = { x = 200, y = 300 }, end_pos = { x = 210, y = 300 } }) -- 短线B 穿过圆心
+        canvas:onSwipe(nil, { pos = { x = 200, y = 300 }, end_pos = { x = 210, y = 300 } }) -- short line B through the centre
         if #canvas.elements ~= 2 then error("setup failed: " .. #canvas.elements) end
         canvas:_setTool("eraser")
-        -- 点击圆心:短线B 墨迹距离≈0,圆A 墨迹距离≈r → 应删除短线B(即使圆A包围盒含该点)
+        -- Tap the centre: short line B ink distance ≈0, circle A ink distance ≈r -> short line B should be deleted (even though circle A's bounding box contains the point)
         local ok_del = canvas:_eraseAt(200, 300)
         if not ok_del or #canvas.elements ~= 1 then
             error("closest-ink pick failed: " .. #canvas.elements)
@@ -400,13 +400,13 @@ if ok_canvas then
         if canvas.elements[1].kind ~= "circle" then
             error("should delete the line, got: " .. canvas.elements[1].kind)
         end
-        -- 点空白处(离墨迹超容差)不应删除
+        -- Tapping blank space (beyond the ink tolerance) must not delete anything
         local ok_none = canvas:_eraseAt(30, 30)
         if ok_none or #canvas.elements ~= 1 then
             error("empty tap should not delete")
         end
-        -- 点在圆轮廓上应删除圆
-        local ok_edge = canvas:_eraseAt(300, 300) -- 圆右缘
+        -- A tap on the circle outline should delete the circle
+        local ok_edge = canvas:_eraseAt(300, 300) -- right edge of the circle
         if not ok_edge or #canvas.elements ~= 0 then
             error("on-ink tap should delete")
         end
@@ -418,7 +418,7 @@ if ok_canvas then
         print("FAIL: eraser closest-ink pick:", tostring(err_pk))
         os.exit(1)
     end
-    -- 橡皮对画笔生效:墨迹点选/框选都能删掉自由笔画(kind=freehand)
+    -- Eraser works on brush strokes: ink tap/box select can both delete freehand strokes (kind=freehand)
     local ok_bx, err_bx = pcall(function()
         local DrawingCanvas = require("drawingpad.drawing_canvas")
         local canvas = DrawingCanvas:new{ on_close = function() end }
@@ -430,13 +430,13 @@ if ok_canvas then
             error("brush stroke kind should be freehand, got: "
                 .. tostring(canvas.elements[1] and canvas.elements[1].kind))
         end
-        -- 点墨迹(路径中点)删除
+        -- Tap the ink (path midpoint) to delete
         canvas:_setTool("eraser")
         local ok_tap = canvas:_eraseAt(150, 325)
         if not ok_tap or #canvas.elements ~= 0 then
             error("eraser tap on brush failed")
         end
-        -- 重画后框选删除
+        -- Redraw then box-select delete
         canvas:_setTool("brush")
         canvas:onPan(nil, { pos = { x = 300, y = 300 }, start_pos = { x = 300, y = 300 } })
         canvas:onPan(nil, { pos = { x = 400, y = 350 }, start_pos = { x = 300, y = 300 } })
@@ -454,7 +454,7 @@ if ok_canvas then
         print("FAIL: eraser on brush:", tostring(err_bx))
         os.exit(1)
     end
-    -- 保存:不闪退(回归 lfs 加载修复)
+    -- Save: no crash (regression for the lfs loading fix)
     local ok_sv, err_sv = pcall(function()
         local DrawingCanvas = require("drawingpad.drawing_canvas")
         local canvas = DrawingCanvas:new{ on_close = function() end }
@@ -469,12 +469,12 @@ if ok_canvas then
         print("FAIL: save:", tostring(err_sv))
         os.exit(1)
     end
-    -- 画笔起笔停留 0.5s 显示起点(onHold 创建进行中笔画,不直接提交)
+    -- Brush pen-down rest of 0.5s shows the start point (onHold creates an in-progress stroke, not committed directly)
     local ok_hold_start, err_hold_start = pcall(function()
         local DrawingCanvas = require("drawingpad.drawing_canvas")
         local canvas = DrawingCanvas:new{ on_close = function() end }
         canvas:_setTool("brush")
-        -- 1. onHold 创建进行中笔画,起点不入元素栈
+        -- 1. onHold creates an in-progress stroke, the start point isn't in the element stack
         canvas:onHold(nil, { pos = { x = 150, y = 350 } })
         if canvas._stroke == nil then
             error("hold should create in-progress stroke")
@@ -485,7 +485,7 @@ if ok_canvas then
         if #canvas._stroke.points ~= 1 or canvas._stroke.points[1].x ~= 150 or canvas._stroke.points[1].y ~= 350 then
             error("hold stroke start point wrong")
         end
-        -- 2. hold_release 收笔,整体落盘为单点
+        -- 2. hold_release pen-up, committed as a single point
         canvas:onHoldRelease(nil, { pos = { x = 150, y = 350 } })
         if #canvas.elements ~= 1 then
             error("hold_release did not commit: " .. #canvas.elements)
@@ -495,13 +495,13 @@ if ok_canvas then
             or dot.points[1].x ~= 150 or dot.points[1].y ~= 350 then
             error("dot element wrong")
         end
-        -- 3. 撤销
+        -- 3. Undo
         canvas:_undo()
         if #canvas.elements ~= 0 then
             error("dot undo failed")
         end
         print("hold start dot + undo OK")
-        -- 4. hold + hold_pan + hold_release:起点显示后拖动成线,同一笔画
+        -- 4. hold + hold_pan + hold_release: after the start point shows, dragging forms a line, same stroke
         canvas:onHold(nil, { pos = { x = 100, y = 300 } })
         canvas:onHoldPan(nil, { pos = { x = 200, y = 350 }, start_pos = { x = 100, y = 300 } })
         canvas:onHoldRelease(nil, { pos = { x = 220, y = 360 } })
@@ -524,5 +524,5 @@ if ok_canvas then
         os.exit(1)
     end
 else
-    print("WARN: DrawingCanvas construct failed (GUI 环境再验):", tostring(err))
+    print("WARN: DrawingCanvas construct failed (re-check in a GUI environment):", tostring(err))
 end

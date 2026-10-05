@@ -262,7 +262,7 @@ end
 
 local TOGGLE_BUTTONS = {
     -- Tool items: variants merged into the main item (name carries a checkbox; tapping again when already active = toggle the check)
-    -- v62n: English is the source language (aligned with plugin_manager.koplugin), Chinese is looked up via i18n dict/L.t
+    -- v62n: English is the source language (this fork is English-only; L.t/L.x return their argument)
     { id = "brush_btn",  cat = "tool", label = "Brush",
       active_fn = function(s) return s.tool == "brush" end,
       on_tap = toolSet("brush") },
@@ -272,14 +272,14 @@ local TOGGLE_BUTTONS = {
     { id = "rect_btn",   cat = "tool",
       -- v59e: tap = switch to the rectangle tool, long-press = toggle ☑Fill
       text_fn = function(s)
-          return L.t("Rect(", "矩形(") .. (s.rect_filled and "☑" or "☐") .. L.t(" fill)", "填充)")
+          return L.t("Rect(") .. (s.rect_filled and "☑" or "☐") .. L.t(" fill)")
       end,
       active_fn = function(s) return s.tool == "rect" end,
       on_tap = toolSet("rect"),
       on_hold = function(s) s:_setTool("rect"); s:_toggleFilled("rect") end },
     { id = "circle_btn", cat = "tool",
       text_fn = function(s)
-          return L.t("Ellipse(", "圆形(") .. (s.circle_filled and "☑" or "☐") .. L.t(" fill)", "填充)")
+          return L.t("Ellipse(") .. (s.circle_filled and "☑" or "☐") .. L.t(" fill)")
       end,
       active_fn = function(s) return s.tool == "circle" end,
       on_tap = toolSet("circle"),
@@ -290,7 +290,7 @@ local TOGGLE_BUTTONS = {
     { id = "select_btn", cat = "tool",
       -- v59g: select + copy merged (☑Copy); tap = switch to the select tool, long-press = toggle ☑Copy
       text_fn = function(s)
-          return L.t("Select(", "选择(") .. (s.select_mode == "copy" and "☑" or "☐") .. L.t(" copy)", "复制)")
+          return L.t("Select(") .. (s.select_mode == "copy" and "☑" or "☐") .. L.t(" copy)")
       end,
       active_fn = function(s) return s.tool == "select" end,
       on_tap = toolSet("select"),
@@ -298,7 +298,7 @@ local TOGGLE_BUTTONS = {
     { id = "fill_btn",   cat = "tool",
       -- v59g: tap fill + path fill merged (☑Path); tap = switch to the fill tool (tap fill), long-press = toggle ☑Path (stroke fill)
       text_fn = function(s)
-          return L.t("Fill(", "填充(") .. (s.fill_mode == "path" and "☑" or "☐") .. L.t(" path)", "路径)")
+          return L.t("Fill(") .. (s.fill_mode == "path" and "☑" or "☐") .. L.t(" path)")
       end,
       active_fn = function(s) return s.tool == "fill" end,
       on_tap = toolSet("fill"),
@@ -306,7 +306,7 @@ local TOGGLE_BUTTONS = {
     { id = "eraser_btn", cat = "tool",
       -- v59f: renamed Erase (☑Box); tap = switch to the eraser tool, long-press = toggle stroke erase/box erase
       text_fn = function(s)
-          return L.t("Erase(", "擦除(") .. (s.eraser_mode == "rect" and L.t("☑box", "☑框选") or L.t("☐box", "☐框选")) .. ")"
+          return L.t("Erase(") .. (s.eraser_mode == "rect" and L.t("☑box") or L.t("☐box")) .. ")"
       end,
       active_fn = function(s) return s.tool == "eraser" end,
       on_tap = toolSet("eraser"),
@@ -315,7 +315,7 @@ local TOGGLE_BUTTONS = {
     { id = "gray_btn",  cat = "prop",
       -- v59e: tap = open grey settings, long-press = toggle ☑Random
       text_fn = function(s)
-          return L.t("Gray(", "灰度(") .. (s.gray_random and "☑" or "☐") .. L.t(" random)", "随机)")
+          return L.t("Gray(") .. (s.gray_random and "☑" or "☐") .. L.t(" random)")
       end,
       on_tap = function(s)
           -- With a selected object, keep the selection and use element-level grey (dispatched inside _pickGray);
@@ -325,7 +325,7 @@ local TOGGLE_BUTTONS = {
       on_hold = function(s) s:_toggleGrayRandom() end },
     { id = "width_btn", cat = "prop",
       text_fn = function(s)
-          return L.t("Width(", "粗细(") .. (s.width_random and "☑" or "☐") .. L.t(" random)", "随机)")
+          return L.t("Width(") .. (s.width_random and "☑" or "☐") .. L.t(" random)")
       end,
       on_tap = function(s)
           -- Same as grey: keep the selection when an object is selected (text/fill notify that they have no line width, other objects adjust per element);
@@ -336,7 +336,7 @@ local TOGGLE_BUTTONS = {
     { id = "alpha_btn", cat = "prop",
       -- v62: tap = open opacity settings, long-press = toggle ☑Random (same approach as grey/width); v62h: swapped with brush tip, placed after width
       text_fn = function(s)
-          return L.t("Opacity(", "透明度(") .. (s.alpha_random and "☑" or "☐") .. L.t(" random)", "随机)")
+          return L.t("Opacity(") .. (s.alpha_random and "☑" or "☐") .. L.t(" random)")
       end,
       on_tap = function(s)
           -- Same as grey: keep the selection and adjust per element when an object is selected; without a selection open global settings, current tool unchanged
@@ -350,7 +350,7 @@ local TOGGLE_BUTTONS = {
       text_fn = function(s)
           local mark = (s.active_layer == 3 and "●" or "○")
           local vis = (s.layer_visible[3] and "☐" or "☑")
-          return mark .. L.t("Top(", "上图层(") .. vis .. L.t("hide)", "隐藏)")
+          return mark .. L.t("Top(") .. vis .. L.t("hide)")
       end,
       active_fn = function(s) return s.active_layer == 3 end,
       on_tap = function(s) s:_switchLayer(3) end,
@@ -359,7 +359,7 @@ local TOGGLE_BUTTONS = {
       text_fn = function(s)
           local mark = (s.active_layer == 2 and "●" or "○")
           local vis = (s.layer_visible[2] and "☐" or "☑")
-          return mark .. L.t("Mid(", "中图层(") .. vis .. L.t("hide)", "隐藏)")
+          return mark .. L.t("Mid(") .. vis .. L.t("hide)")
       end,
       active_fn = function(s) return s.active_layer == 2 end,
       on_tap = function(s) s:_switchLayer(2) end,
@@ -368,7 +368,7 @@ local TOGGLE_BUTTONS = {
       text_fn = function(s)
           local mark = (s.active_layer == 1 and "●" or "○")
           local vis = (s.layer_visible[1] and "☐" or "☑")
-          return mark .. L.t("Bottom(", "下图层(") .. vis .. L.t("hide)", "隐藏)")
+          return mark .. L.t("Bottom(") .. vis .. L.t("hide)")
       end,
       active_fn = function(s) return s.active_layer == 1 end,
       on_tap = function(s) s:_switchLayer(1) end,
@@ -377,7 +377,7 @@ local TOGGLE_BUTTONS = {
       -- v62: overall opacity of the current layer (fade a draft layer as a whole); text includes the current value
       text_fn = function(s)
           local v = (s.layer_alpha and s.layer_alpha[s.active_layer]) or 1
-          return L.t("Layer opacity ", "当前层透明度 ") .. math.floor(v * 100 + 0.5) .. "%"
+          return L.t("Layer opacity ") .. math.floor(v * 100 + 0.5) .. "%"
       end,
       on_tap = function(s) s:_pickLayerAlpha() end },
     -- Function items (the panel stays open after tapping so undo/redo/clear can be tapped repeatedly; exit/about merged in v59d)
@@ -599,53 +599,53 @@ function M:_statusText()
     local t = self.tool
     local gray_txt
     if self.gray_random then
-        gray_txt = string.format(L.t("G:rand(%d-%d,%d)", "灰:随机(%d-%d,%d级)"),
+        gray_txt = string.format(L.t("G:rand(%d-%d,%d)"),
             math.floor(self.gray_min * 100 + 0.5), math.floor(self.gray_max * 100 + 0.5), self.gray_levels)
     else
-        gray_txt = string.format(L.t("G:%d%%", "灰:%d%%"), math.floor(self.gray * 100 + 0.5))
+        gray_txt = string.format(L.t("G:%d%%"), math.floor(self.gray * 100 + 0.5))
     end
     local width_txt
     if self.width_random then
-        width_txt = string.format(L.t("W:rand(%d-%d,%d)", "粗:随机(%d-%d,%d级)"), self.width_min, self.width_max, self.width_levels)
+        width_txt = string.format(L.t("W:rand(%d-%d,%d)"), self.width_min, self.width_max, self.width_levels)
     else
-        width_txt = string.format(L.t("W:%d", "粗:%d"), self.width)
+        width_txt = string.format(L.t("W:%d"), self.width)
     end
     local layer_txt = L.x(const.LAYER_NAMES[self.active_layer])
-        .. (self.layer_visible[self.active_layer] and "" or L.t("(hide)", "(隐)"))
+        .. (self.layer_visible[self.active_layer] and "" or L.t("(hide)"))
     -- Opacity (next stroke): shown only when random or not fully opaque, saving status bar width;
-    -- a marker is appended when the blend mode is not normal (* = multiply, + = linear dodge; single-character equivalents in Chinese)
+    -- a marker is appended when the blend mode is not normal (* = multiply, + = linear dodge)
     if self.alpha_blend == "multiply" then
-        layer_txt = layer_txt .. L.t("*", "叠")
+        layer_txt = layer_txt .. L.t("*")
     elseif self.alpha_blend == "dodge" then
-        layer_txt = layer_txt .. L.t("+", "淡")
+        layer_txt = layer_txt .. L.t("+")
     end
     if self.alpha_random then
-        layer_txt = layer_txt .. string.format(L.t(" O:rand(%d-%d)", " 透:随机(%d-%d)"),
+        layer_txt = layer_txt .. string.format(L.t(" O:rand(%d-%d)"),
             math.floor((self.alpha_min or 0.3) * 100 + 0.5), math.floor((self.alpha_max or 1) * 100 + 0.5))
     elseif (self.alpha or 1) < 0.999 then
-        layer_txt = layer_txt .. string.format(L.t(" O:%d%%", " 透:%d%%"), math.floor(self.alpha * 100 + 0.5))
+        layer_txt = layer_txt .. string.format(L.t(" O:%d%%"), math.floor(self.alpha * 100 + 0.5))
     end
     local base
     if t == "text" then
         -- Text: grey value/font size/font name/layer
         local fname = (self.font or "?"):gsub("%.[^.]+$", "")
-        base = string.format("%s %s %s:%d %s %s", L.x(const.TOOL_NAMES[t]), gray_txt, L.t("size", "字号"), self.font_size, fname, layer_txt)
+        base = string.format("%s %s %s:%d %s %s", L.x(const.TOOL_NAMES[t]), gray_txt, L.t("size"), self.font_size, fname, layer_txt)
     elseif t == "eraser" then
-        local mode = (self.eraser_mode == "rect") and L.t("box", "框选删") or L.t("tap", "画笔删")
+        local mode = (self.eraser_mode == "rect") and L.t("box") or L.t("tap")
         base = string.format("%s(%s) %s %s", L.x(const.TOOL_NAMES[t]), mode, width_txt, layer_txt)
     elseif t == "fill" then
-        local mode = (self.fill_mode == "path") and L.t("path", "描边填") or L.t("tap", "点填")
+        local mode = (self.fill_mode == "path") and L.t("path") or L.t("tap")
         base = string.format("%s(%s) %s %s", L.x(const.TOOL_NAMES[t]), mode, gray_txt, layer_txt)
     elseif t == "select" then
-        local mode = (self.select_mode == "copy") and L.t("copy", "复制") or L.t("move", "移动")
-        base = string.format(L.t("Select(%s)", "选择(%s)") .. " %s", mode, layer_txt)
+        local mode = (self.select_mode == "copy") and L.t("copy") or L.t("move")
+        base = string.format(L.t("Select(%s)") .. " %s", mode, layer_txt)
     elseif t == "rect" or t == "circle" then
         local filled = ((t == "rect" and self.rect_filled) or (t == "circle" and self.circle_filled))
-            and L.t("fill", "实心") or L.t("line", "空心")
+            and L.t("fill") or L.t("line")
         base = string.format("%s(%s) %s %s %s", L.x(const.TOOL_NAMES[t]), filled, gray_txt, width_txt, layer_txt)
     else
         -- Brush/line show the brush tip shape (part of the next-stroke state)
-        local tip_txt = (t == "brush" or t == "line") and (" " .. L.t("tip:", "尖:") .. (L.x(const.TIP_NAMES[self.tip]) or L.x("O"))) or ""
+        local tip_txt = (t == "brush" or t == "line") and (" " .. L.t("tip:") .. (L.x(const.TIP_NAMES[self.tip]) or L.x("O"))) or ""
         base = string.format("%s %s %s%s %s", L.x(const.TOOL_NAMES[t]) or t, gray_txt, width_txt, tip_txt, layer_txt)
     end
     return base
@@ -664,16 +664,6 @@ end
 function M:_showCenteredButtons(title, buttons, width_factor)
     -- Everything goes through components.showCenteredDialog (bottom-anchored rounded draggable panel + tap outside to close);
     -- returns bt (labels changeable via button_by_id), popup
-    -- v62h: item text goes through the English menu dictionary (L.x; the title is translated centrally by showCenteredDialog)
-    if L.lang == "en" and buttons then
-        for _, row in ipairs(buttons) do
-            for _, bdef in ipairs(row) do
-                if type(bdef.text) == "string" then
-                    bdef.text = L.x(bdef.text)
-                end
-            end
-        end
-    end
     local bt = ButtonTable:new{
         width = math.floor(Screen:getWidth() * (width_factor or const.UI_WIDTH_MEDIUM)),
         buttons = buttons,
@@ -699,7 +689,7 @@ function M:_showTipMenu()
     local ok, err = pcall(M._showTipMenu_core, self)
     if not ok then
         local ok2, msg = pcall(tostring, err)
-        self:_log("tip menu error:", ok2 and msg or "(无法序列化错误对象)")
+        self:_log("tip menu error:", ok2 and msg or "(unprintable error object)")
         components.showToast("Tip menu failed to open", 2)
     end
 end
@@ -797,7 +787,7 @@ function M._showTipMenu_core(self)
             local parts = {}
             for _, v in ipairs({...}) do
                 local ok2, r = pcall(tostring, v)
-                parts[#parts + 1] = ok2 and r or "(无法序列化)"
+                parts[#parts + 1] = ok2 and r or "(unprintable)"
             end
             local msg = table.concat(parts, " ")
             self:_log(msg)
@@ -850,7 +840,7 @@ function M:_showTextDialog(x, y, el)
     end
     -- Font/size buttons: update the button labels in the popup live after selection
     local function fontLabel()
-        return L.t("Font: ", "字体: ") .. ((self.font or "?"):gsub("%.[^.]+$", ""))
+        return L.t("Font: ") .. ((self.font or "?"):gsub("%.[^.]+$", ""))
     end
     local function updateFontLabel()
         local btn = dlg.button_table and dlg.button_table.button_by_id
@@ -864,21 +854,21 @@ function M:_showTextDialog(x, y, el)
         local btn = dlg.button_table and dlg.button_table.button_by_id
             and dlg.button_table.button_by_id["size_btn"]
         if btn and btn.setText then
-            btn:setText(L.t("Size: ", "字号: ") .. self.font_size, btn.width)
+            btn:setText(L.t("Size: ") .. self.font_size, btn.width)
             UIManager:setDirty(dlg, "partial")
         end
     end
     dlg = InputDialog:new{
         title = L.x(is_edit and "Edit text" or "Insert text"),
         input = (is_edit and el.text) or (self._last_text or ""),
-        input_hint = is_edit and L.t("Edit text (font/size via buttons below)", "修改文字内容(字体/字号用下方按钮)")
-            or L.t("Enter text to insert", "输入要插入的文字(灰度用工具栏调整)"),
+        input_hint = is_edit and L.t("Edit text (font/size via buttons below)")
+            or L.t("Enter text to insert"),
         buttons = {
             {
                 -- Font/size integrated into the text popup
                 { id = "font_btn", text = fontLabel(),
                   callback = function() self_widget:_pickFont(updateFontLabel) end },
-                { id = "size_btn", text = L.t("Size: ", "字号: ") .. self.font_size,
+                { id = "size_btn", text = L.t("Size: ") .. self.font_size,
                   callback = function() self_widget:_pickFontSize(updateSizeLabel) end },
             },
             {
@@ -1151,8 +1141,8 @@ function M:_showSettingDialog(o)
         local l = {
             string.format("%s:%s", L.x(o.labels.max), o.disp(o.get.max(self))),
             string.format("%s:%s", L.x(o.labels.min), o.disp(o.get.min(self))),
-            string.format(L.t("Levels:%d", "分级:%d"), o.get.levels(self)),
-            string.format(L.t("Fixed:%s", "固定:%s"), o.disp(o.get.fixed(self))),
+            string.format(L.t("Levels:%d"), o.get.levels(self)),
+            string.format(L.t("Fixed:%s"), o.disp(o.get.fixed(self))),
         }
         if o.mode then
             l[5] = o.mode.label(self)
@@ -1390,11 +1380,11 @@ function M:_pickAlpha()
             label = function(s)
                 local m = s.alpha_blend or "normal"
                 if m == "multiply" then
-                    return L.t("Blend:Multiply", "混合:正片叠底")
+                    return L.t("Blend:Multiply")
                 elseif m == "dodge" then
-                    return L.t("Blend:Dodge", "混合:线性减淡")
+                    return L.t("Blend:Dodge")
                 end
-                return L.t("Blend:Normal", "混合:正常")
+                return L.t("Blend:Normal")
             end,
             cycle = function(s)
                 local m = s.alpha_blend or "normal"
@@ -1506,7 +1496,7 @@ function M:_pickFont(on_change)
         return
     end
     menu = Menu:new{
-        title = T(L.t("Choose font (%1 total)", "选择字体(共 %1 个)"), #items),
+        title = T(L.t("Choose font (%1 total)"), #items),
         item_table = items,
         width = math.floor(math.min(Screen:getWidth(), Screen:getHeight()) * const.UI_WIDTH_WIDE),
         height = math.floor(Screen:getHeight() * 0.9),
@@ -1552,7 +1542,7 @@ end
 -- title_prefix (optional) = popup title prefix (default "Choose save folder: ")
 function M:_pickSaveFolder(on_change, on_pick_file, file_ext, title_prefix)
     file_ext = file_ext or "%.png$"
-    title_prefix = title_prefix or L.t("Choose save folder: ", "选择保存文件夹: ")
+    title_prefix = title_prefix or L.t("Choose save folder: ")
     local lfs = require("libs/libkoreader-lfs")
     local base = DataStorage:getDataDir() .. "/drawingboard"
     if lfs.attributes(base, "mode") ~= "directory" then
@@ -1572,7 +1562,7 @@ function M:_pickSaveFolder(on_change, on_pick_file, file_ext, title_prefix)
         return head
     end
     local function titleOf(p)
-        return (p == base) and L.t("root folder", "根目录") or p
+        return (p == base) and L.t("root folder") or p
     end
     local function commit(path)
         self.save_folder = (path == base) and "" or path
@@ -1692,37 +1682,13 @@ function M:_showAbout()
         return TextWidget:new{ text = text, face = face }
     end
     -- v62t: close button removed (tap outside to close)
-    -- v62h: English menu options (cycles Auto -> Chinese -> English); auto rule = non-Chinese system language -> English
-    local lang_names = { auto = L.t("Language: auto", "菜单语言:自动"), zh = L.t("Language: 中文", "菜单语言:中文"), en = L.t("Language: English", "菜单语言:English") }
-    local lang_bt = ButtonTable:new{
-        width = math.floor(Screen:getWidth() * const.UI_WIDTH_NARROW),
-        buttons = {
-            { { text = lang_names[self.menu_lang or "auto"],
-                callback = function()
-                    local next_pref = { auto = "en", en = "zh", zh = "auto" }
-                    self.menu_lang = next_pref[self.menu_lang or "auto"]
-                    if self.menu_lang == "auto" then
-                        self.menu_lang = nil
-                    end
-                    L.resolve(self.menu_lang)
-                    self:_refreshToolbar()
-                    components.showToast(self.menu_lang == "en" and L.t("Menu language: English", "菜单语言已切换为英文,重开菜单生效")
-                        or L.t("Menu language: Chinese", "菜单语言已切换为中文,重开菜单生效"), 2)
-                    if self._about_popup then
-                        UIManager:close(self._about_popup, "full")
-                        self._about_popup = nil
-                    end
-                end } },
-        },
-    }
     local content = VerticalGroup:new{
         align = "center",
-        line(L.t("drawingboard", "drawingboard")),
-        line(L.t("Version:", "软件版本:") .. const.PLUGIN_VERSION),
-        line(L.t("Author:", "作者:") .. const.PLUGIN_AUTHOR),
+        line(L.t("drawingboard")),
+        line(L.t("Version:") .. const.PLUGIN_VERSION),
+        line(L.t("Author:") .. const.PLUGIN_AUTHOR),
         line("GitHub: https://github.com/eznas"),
-        line(L.t("Save to: koreader/drawingboard/", "保存路径:koreader/drawingboard/")),
-        lang_bt,
+        line(L.t("Save to: koreader/drawingboard/")),
     }
     self._about_popup = components.showCenteredDialog{
         name = "DrawingAbout",

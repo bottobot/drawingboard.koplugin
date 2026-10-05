@@ -1,10 +1,10 @@
--- 起笔刷新策略回归:任何"画布刷新"都必须带区域
--- 背景:插件的 setDirty(partial, nil) 在 KOReader 里 = 整屏刷新(还会按次数升级成
--- full 闪刷),墨水屏上就是一次闪屏。历史 bug:快速起笔时(_renderStrokeTail 只画了
--- 起笔圆点、还没到能渲染线段,返回 nil)_stroke_region 仍是 nil,"起笔立即刷新"那发
--- 就变成整屏刷新 → 真机"快速起笔闪一下";慢起笔走 onHold(有 if rx0 守卫)不闪。
--- 本测试:模拟快/慢起笔,断言所有画布刷新的 mode=partial 且 region 非 nil。
--- 自定位插件根(模拟器 /home/m/koreader 与真机 /mnt/us/koreader 都能跑)
+-- Pen-down refresh policy regression: every "canvas refresh" must carry a region
+-- Background: the plugin's setDirty(partial, nil) in KOReader = a full-screen refresh (also upgraded by count to a
+-- flashing full refresh), which is a flash on e-ink. Historical bug: on a fast pen-down (_renderStrokeTail had only drawn the
+-- start dot and couldn't render a segment yet, returning nil) _stroke_region was still nil, so the "refresh immediately on pen-down"
+-- became a full-screen refresh -> "a flash on fast pen-down" on the real device; slow pen-down goes through onHold (with an if rx0 guard) and doesn't flash.
+-- This test: simulate fast/slow pen-downs and assert every canvas refresh has mode=partial and a non-nil region.
+-- Self-locate the plugin root (runs on both the emulator /home/m/koreader and the device /mnt/us/koreader)
 local __t_src = debug.getinfo(1, "S").source
 local __t_dir = __t_src:match("^@(.*)[/\\][^/\\]*$") or "."
 local __t_plugin = __t_dir:match("^(.*)[/\\]drawingpad[/\\]test$") or __t_dir
@@ -61,22 +61,22 @@ local function case(label, fn)
     local m0 = #calls
     fn()
     local n, nils, empty = drain(m0 + 1)
-    print(string.format("  %-22s 刷新 %d 次,无区域 %d,空区域 %d", label, n, nils, empty))
+    print(string.format("  %-22s %d refreshes, %d without region, %d with empty region", label, n, nils, empty))
     if nils > 0 then
-        fails[#fails + 1] = label .. ": " .. nils .. " 次整屏(无区域)刷新"
+        fails[#fails + 1] = label .. ": " .. nils .. " full-screen (region-less) refreshes"
     end
     if empty > 0 then
-        fails[#fails + 1] = label .. ": " .. empty .. " 次空区域刷新"
+        fails[#fails + 1] = label .. ": " .. empty .. " empty-region refreshes"
     end
 end
 
--- 快起笔 = 第 2 个 pan 就跳过阈值(手势检测调低 PAN_THRESHOLD 后真机很常见)
+-- Fast pen-down = the 2nd pan already passes the threshold (very common on the device after lowering PAN_THRESHOLD in the gesture detector)
 local function fast_start()
     canvas:onPan(nil, { pos = { x = 300, y = 300 }, start_pos = { x = 300, y = 300 } })
     canvas:onPan(nil, { pos = { x = 340, y = 300 }, start_pos = { x = 300, y = 300 } })
 end
 
--- 慢起笔 = 按住不动先出 hold(0.5s),再拖动
+-- Slow pen-down = hold still first and get hold (0.5s), then drag
 local function slow_start()
     canvas:onHold(nil, { pos = { x = 300, y = 500 } })
     canvas:onPan(nil, { pos = { x = 340, y = 500 }, start_pos = { x = 300, y = 500 } })
@@ -87,12 +87,12 @@ for _, t in ipairs({ { "fill", "path", 1 }, { "brush", nil, 4 } }) do
     canvas:_setTool(tool)
     if mode then canvas.fill_mode = mode end
     canvas.width = w
-    case(tool .. " 快起笔", fast_start)
-    case(tool .. " 慢起笔", slow_start)
+    case(tool .. " fast pen-down", fast_start)
+    case(tool .. " slow pen-down", slow_start)
 end
 
--- 快起笔后连续画 + 收笔:整条链上只允许收笔那发"匀平残影"的全屏刷新(_penUpRefresh,
--- 每次抬笔一次是设计如此),起笔/中途一律必须带区域
+-- Fast pen-down then continuous drawing + pen-up: on the whole chain only the pen-up "even out ghosting" full-screen refresh is allowed (_penUpRefresh,
+-- once per pen lift by design); pen-down/mid-stroke refreshes must all carry a region
 canvas:_setTool("brush")
 canvas.width = 4
 reset()
@@ -103,15 +103,15 @@ for i = 1, 20 do
 end
 canvas:onPanRelease(nil, { pos = { x = 460, y = 300 } })
 local n, nils, empty = drain(m0 + 1)
-print(string.format("  %-22s 刷新 %d 次,无区域 %d,空区域 %d", "整笔(快起笔+20点+收笔)", n, nils, empty))
+print(string.format("  %-22s %d refreshes, %d without region, %d with empty region", "whole stroke (fast pen-down+20 points+pen-up)", n, nils, empty))
 if nils ~= 1 then
-    fails[#fails + 1] = "整笔: 无区域刷新 " .. nils .. " 次(只该有收笔那一次匀平)"
+    fails[#fails + 1] = "whole stroke: " .. nils .. " region-less refreshes (only the single pen-up one is expected)"
 elseif calls[#calls].region then
-    fails[#fails + 1] = "整笔: 唯一那发无区域刷新不是收笔(说明是起笔/中途在整屏刷)"
+    fails[#fails + 1] = "whole stroke: the only region-less refresh is not the pen-up one (pen-down/mid-stroke is refreshing the full screen)"
 end
-if empty > 0 then fails[#fails + 1] = "整笔: " .. empty .. " 次空区域刷新" end
+if empty > 0 then fails[#fails + 1] = "whole stroke: " .. empty .. " empty-region refreshes" end
 if #canvas.layers[2] ~= 1 then
-    fails[#fails + 1] = "整笔未提交为 1 个元素(实际 " .. #canvas.layers[2] .. ")"
+    fails[#fails + 1] = "whole stroke not committed as 1 element (actual " .. #canvas.layers[2] .. ")"
 end
 
 if #fails > 0 then

@@ -1,9 +1,9 @@
 --[[--
-回归:实心圆形拉伸后旋转保持实心 + 关闭画板时分类菜单不残留
-1. 实心圆 → 非等比拉伸成椭圆 → 旋转:渲染中心与内部仍是墨(filled 丢失=中心白)
-2. onCloseWidget 关闭仍打开的分类面板(退出按钮/Back 键等所有 close 路径共用)
+Regression: a filled circle stays filled after stretching then rotating + no category menu left behind when the board closes
+1. Filled circle -> non-uniform stretch into an ellipse -> rotate: the rendered centre and interior are still ink (filled lost = white centre)
+2. onCloseWidget closes a category panel that is still open (shared by every close path: exit button/Back key etc.)
 
-运行(从 KOReader 模拟器根目录):
+Run (from the KOReader emulator root):
     ./luajit plugins/drawingboard.koplugin/drawingpad/test/circle_fill_close_test.lua
 --]]
 local __t_src = debug.getinfo(1, "S").source
@@ -41,7 +41,7 @@ local function newCanvas()
     return DrawingCanvas:new{ on_close = function() end }
 end
 
--- ============ 1. 实心圆拉伸→旋转保持实心 ============
+-- ============ 1. Filled circle stretch -> rotate stays filled ============
 do
     local function renderEl(el)
         local bb = Blitbuffer.new(400, 400, Blitbuffer.TYPE_BB8)
@@ -53,12 +53,12 @@ do
     local el = { kind = "circle", cx = 200, cy = 200, r = 80, rx = 80, ry = 80,
         width = 3, filled = true }
 
-    -- 基线:实心圆渲染中心有墨
+    -- Baseline: the filled circle has ink at its rendered centre
     local bb = renderEl(el)
     check(bb:getPixel(200, 200).a < 128, "solid circle renders ink at center")
     bb:free()
 
-    -- 拉伸(非等比 1.5x/1x → 椭圆)
+    -- Stretch (non-uniform 1.5x/1x -> ellipse)
     local c = newCanvas()
     local sb = { x0 = 120, y0 = 120, x1 = 280, y1 = 280 }
     local nb = { x0 = 120, y0 = 120, x1 = 360, y1 = 280 }
@@ -68,27 +68,27 @@ do
     check(el.rx == 120 and el.ry == 80, "scale makes ellipse, got rx="
         .. tostring(el.rx) .. " ry=" .. tostring(el.ry))
 
-    -- 旋转 30°:修复前渲染退化描边(中心白),修复后中心有墨
+    -- Rotate 30°: before the fix rendering degraded to an outline (white centre), after the fix the centre has ink
     c:_rotateElement(el, math.pi / 6, el.cx, el.cy)
     c:_cacheBBox(el)
     check(el.filled == true and (el.rot or 0) ~= 0, "rotate keeps filled and sets rot")
     bb = renderEl(el)
     check(bb:getPixel(200, 200).a < 128, "rotated solid ellipse has ink at center (was hollow)")
-    -- 椭圆长轴端内一点(旋转 30° 后长轴端 (311,230) 方向)也应有墨
+    -- A point inside the end of the ellipse's major axis (direction of the major-axis end (311,230) after a 30° rotation) must also have ink
     local lx = 200 + 110 * math.cos(math.pi / 6)
     local ly = 200 + 110 * math.sin(math.pi / 6)
     check(bb:getPixel(math.floor(lx), math.floor(ly)).a < 128,
         "rotated solid ellipse has ink near major axis tip")
     bb:free()
 
-    -- 再转 90° 仍实心
+    -- Rotate another 90°, still filled
     c:_rotateElement(el, math.pi / 2, el.cx, el.cy)
     bb = renderEl(el)
     check(bb:getPixel(200, 200).a < 128, "rotated 90+30 deg still solid")
     bb:free()
 end
 
--- ============ 2. 关闭画板时分类菜单不残留 ============
+-- ============ 2. No category menu left behind when the board closes ============
 do
     local UIManager = require("ui/uimanager")
     local shown, closed = {}, {}
@@ -101,26 +101,26 @@ do
     local popup = c._category_popup
     check(popup ~= nil and c._open_cat == "func", "func panel opens")
 
-    c:onCloseWidget() -- 退出按钮/Back 键关闭画板的公共析构路径
+    c:onCloseWidget() -- shared teardown path when the exit button/Back key closes the board
     check(closed[#closed] == popup and c._category_popup == nil and c._open_cat == nil,
         "onCloseWidget closes category popup (no residue)")
 
     UIManager.show, UIManager.close = orig_show, orig_close
 end
 
--- ============ 7. 实心矩形旋转后保持实心(v61k:poly 渲染补填充) ============
+-- ============ 7. A filled rectangle stays filled after rotation (v61k: poly rendering adds the fill) ============
 do
     local el = { kind = "rect", x0 = 150, y0 = 250, x1 = 250, y1 = 350,
         width = 3, filled = true }
     local c = newCanvas()
-    c:_rotateElement(el, math.pi / 4, 200, 300) -- 旋转后 rect → poly
+    c:_rotateElement(el, math.pi / 4, 200, 300) -- after rotation rect -> poly
     c:_cacheBBox(el)
     check(el.kind == "poly" and el.filled == true, "rotated rect stays filled poly")
     local bb = Blitbuffer.new(400, 600, Blitbuffer.TYPE_BB8)
     bb:fill(Blitbuffer.COLOR_WHITE)
     shapes.drawElement(bb, el, Blitbuffer.gray(1), 0, 0)
     check(bb:getPixel(200, 300).a < 128, "rotated solid rect has ink at center (was hollow)")
-    -- 实心内部可选中(_inkDistance 命中)
+    -- The filled interior is selectable (_inkDistance hit)
     check(c:_inkDistance(el, 200, 300) == 0, "inkDistance 0 inside filled poly (selectable)")
     bb:free()
 end

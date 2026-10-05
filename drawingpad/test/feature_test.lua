@@ -1,16 +1,16 @@
 --[[--
-绘图板新功能单测(防抖 / 字号上限 / 画笔⇄直线 / 选择对象移动复制):
-1. 防抖:画笔起笔移动阈值、快速轻触墨点(onPanRelease 与 onTap)、形状最小尺寸
-2. 字号上限 800(_pickFontSize 弹出 SpinWidget 的 value_max)
-3. 画笔⇄直线(工具面板条目互斥切换 + 按钮文字跟随)
-4. 选择对象:点选/取消、移动、复制、undo/redo、模式切换、像素断言
+Drawing board new-feature unit tests (debounce / font size limit / brush<->line / select object move & copy):
+1. Debounce: brush pen-down movement threshold, quick light-tap ink dot (onPanRelease and onTap), shape minimum size
+2. Font size limit 800 (value_max of the SpinWidget popped up by _pickFontSize)
+3. Brush<->line (mutually exclusive tool panel items + button text follows)
+4. Select object: tap select/deselect, move, copy, undo/redo, mode toggle, pixel assertions
 
-运行(从 KOReader 根目录):
+Run (from the KOReader root):
     ./koreader-emulator-x86_64-linux-gnu-debug/koreader/luajit plugins/drawingboard.koplugin/drawingpad/test/feature_test.lua
 --]]
 
--- 绘图板模块已随插件移入 plugins/drawingboard.koplugin/drawingpad/:
--- 测试不经 pluginloader,自定位插件根注入 package.path,使 require("drawingpad.*") 可解析
+-- The drawing board modules moved into plugins/drawingboard.koplugin/drawingpad/ with the plugin:
+-- tests don't go through pluginloader, so self-locate the plugin root and inject package.path so require("drawingpad.*") resolves
 local __t_src = debug.getinfo(1, "S").source
 local __t_dir = __t_src:match("^@(.*)[/\\][^/\\]*$") or "."
 local __t_plugin = __t_dir:match("^(.*)[/\\]drawingpad[/\\]test$") or __t_dir
@@ -20,7 +20,7 @@ end
 
 require("setupkoenv")
 
--- 前置初始化必须早于任何 require("ui/uimanager")/require("device")
+-- Pre-initialisation must happen before any require("ui/uimanager")/require("device")
 G_defaults = require("luadefaults"):open()
 local DataStorage = require("datastorage")
 G_reader_settings = require("luasettings"):open(DataStorage:getDataDir() .. "/settings.reader.lua")
@@ -39,10 +39,10 @@ local function check(cond, msg)
     end
 end
 
--- ============ 1. 防抖 ============
+-- ============ 1. Debounce ============
 do
     local ok, err = pcall(function()
-        -- 1a. 画笔:真零移动轻点松手 → 无微轨迹,退化为单点墨迹(按下点)
+        -- 1a. Brush: a true zero-movement light tap and release -> no micro-trace, degenerates to a single-point ink dot (touch-down point)
         local canvas = newCanvas()
         canvas:_setTool("brush")
         canvas:onPan(nil, { pos = { x = 100, y = 300 }, start_pos = { x = 100, y = 300 } })
@@ -53,7 +53,7 @@ do
             and dot.points[1].x == 100 and dot.points[1].y == 300,
             "dot should be 1 point at press point")
 
-        -- 1a2. 早触发策略:超过 EARLY_TRIGGER(1px)的微小移动即正式起笔,保住起笔曲线
+        -- 1a2. Early-trigger policy: a tiny movement beyond EARLY_TRIGGER (1px) formally starts the stroke, keeping the start curve
         local canvas_a2 = newCanvas()
         canvas_a2:_setTool("brush")
         canvas_a2:onPan(nil, { pos = { x = 100, y = 300 }, start_pos = { x = 100, y = 300 } })
@@ -62,14 +62,14 @@ do
         canvas_a2:onPanRelease(nil, { pos = { x = 110, y = 310 } })
         check(#canvas_a2.elements == 1, "early-trigger stroke should commit")
 
-        -- 1a3. 起笔死区调优:打开时调低手势 PAN_THRESHOLD、按比例缩短 hold 间隔,
-        -- 关闭还原,重复应用幂等
+        -- 1a3. Pen-down dead zone tuning: on open, lower the gesture PAN_THRESHOLD and shorten the hold interval proportionally,
+        -- restore on close, repeated application is idempotent
         do
             local const = require("drawingpad.const")
             local real_device = package.loaded["device"]
             local gd = {
                 PAN_THRESHOLD = 35,
-                ges_hold_interval = 500000, -- KOReader time.ms(500),单位无关按比例缩放
+                ges_hold_interval = 500000, -- KOReader time.ms(500), scaled proportionally regardless of units
                 screen = { scaleByDPI = function(_, v) return v end },
             }
             package.loaded["device"] = { input = { gesture_detector = gd } }
@@ -90,7 +90,7 @@ do
             package.loaded["device"] = real_device
         end
 
-        -- 1b. 画笔:移动达到阈值(≥4px) → 正式起笔,首点=按下点
+        -- 1b. Brush: movement reaches the threshold (≥4px) -> stroke formally starts, first point = touch-down point
         local canvas2 = newCanvas()
         canvas2:_setTool("brush")
         canvas2:onPan(nil, { pos = { x = 100, y = 300 }, start_pos = { x = 100, y = 300 } })
@@ -103,21 +103,21 @@ do
         check(#canvas2.elements == 1, "threshold stroke should commit")
         check(canvas2.elements[1].points[1].x == 100, "committed stroke first point = press")
 
-        -- 1c. 画笔 onTap:快速轻触产生墨点
+        -- 1c. Brush onTap: a quick light tap produces an ink dot
         local canvas3 = newCanvas()
         canvas3:_setTool("brush")
         canvas3:onTap(nil, { pos = { x = 150, y = 400 } })
         check(#canvas3.elements == 1 and canvas3.elements[1].points[1].x == 150,
             "tap should produce a dot")
 
-        -- 1d. 形状最小尺寸:过小丢弃,正常尺寸提交
+        -- 1d. Shape minimum size: too small is discarded, normal size is committed
         local canvas4 = newCanvas()
         canvas4:_setTool("rect")
         canvas4:onPan(nil, { pos = { x = 100, y = 300 }, start_pos = { x = 100, y = 300 } })
         canvas4:onPanRelease(nil, { pos = { x = 105, y = 305 } }) -- 5x5 < 8
         check(#canvas4.elements == 0, "tiny rect should be discarded")
         canvas4:onPan(nil, { pos = { x = 100, y = 300 }, start_pos = { x = 100, y = 300 } })
-        canvas4:onPanRelease(nil, { pos = { x = 160, y = 360 } }) -- 60x60 正常
+        canvas4:onPanRelease(nil, { pos = { x = 160, y = 360 } }) -- 60x60 normal
         check(#canvas4.elements == 1 and canvas4.elements[1].kind == "rect",
             "normal rect should commit")
         canvas4:_setTool("circle")
@@ -125,12 +125,12 @@ do
         canvas4:onPanRelease(nil, { pos = { x = 102, y = 300 } }) -- r=2 < 8
         check(#canvas4.elements == 1, "tiny circle should be discarded")
         canvas4:onPan(nil, { pos = { x = 100, y = 300 }, start_pos = { x = 100, y = 300 } })
-        canvas4:onPanRelease(nil, { pos = { x = 120, y = 300 } }) -- r=20 正常
+        canvas4:onPanRelease(nil, { pos = { x = 120, y = 300 } }) -- r=20 normal
         check(#canvas4.elements == 2 and canvas4.elements[2].kind == "circle",
             "normal circle should commit")
         canvas4:_setTool("line")
         canvas4:onPan(nil, { pos = { x = 100, y = 300 }, start_pos = { x = 100, y = 300 } })
-        canvas4:onPanRelease(nil, { pos = { x = 105, y = 300 } }) -- 长 5 < 8
+        canvas4:onPanRelease(nil, { pos = { x = 105, y = 300 } }) -- length 5 < 8
         check(#canvas4.elements == 2, "tiny line should be discarded")
         print("debounce: quick-touch dot / threshold stroke / tap dot / tiny shapes OK")
     end)
@@ -142,13 +142,13 @@ do
     end
 end
 
--- ============ 1b. 起笔小圆弧保留(防抖期微轨迹不丢 / 无收锋 / 抽稀封顶) ============
+-- ============ 1b. Small start arcs kept (debounce micro-trace not lost / no tapered end / thinning step capped) ============
 do
     local ok, err = pcall(function()
         local Blitbuffer = require("ffi/blitbuffer")
         local shapes = require("drawingpad.shapes")
 
-        -- 1b-1. 早触发:1px 移动即起笔,微轨迹在起笔时并入笔画,起笔小弧保留
+        -- 1b-1. Early trigger: 1px movement starts the stroke, the micro-trace is merged into the stroke at start, the small start arc is kept
         local canvas = newCanvas()
         canvas:_setTool("brush")
         canvas:onPan(nil, { pos = { x = 400, y = 400 }, start_pos = { x = 400, y = 400 } })
@@ -163,27 +163,27 @@ do
         check(tick.points[1].x == 400 and tick.points[1].y == 400, "1b-1: first point = press")
         check(canvas.canvas_bb:getPixel(401, 401).a < 128, "1b-1: tick ink visible")
 
-        -- 1b-2. swipe 收尾 + 微轨迹:按下点+微轨迹+终点成弧形笔画(旧版拉直为 2 点直线)
+        -- 1b-2. swipe finish + micro-trace: touch-down point + micro-trace + end point form an arc stroke (the old version straightened it into a 2-point line)
         local canvas3 = newCanvas()
         canvas3:_setTool("brush")
         canvas3:onPan(nil, { pos = { x = 500, y = 400 }, start_pos = { x = 500, y = 400 } })
         canvas3:onPan(nil, { pos = { x = 501, y = 401 }, start_pos = { x = 500, y = 400 } })
         canvas3:onPan(nil, { pos = { x = 502, y = 400 }, start_pos = { x = 500, y = 400 } })
-        -- 快甩被分类为 swipe(pos=起点,end_pos=终点,语义与 pan 相反)
+        -- A fast flick is classified as swipe (pos = start, end_pos = end, opposite of pan semantics)
         canvas3:onSwipe(nil, { pos = { x = 500, y = 400 }, end_pos = { x = 520, y = 384 } })
         check(#canvas3.elements == 1, "1b-2: swipe with micro commits stroke, got " .. #canvas3.elements)
         local sw = canvas3.elements[1]
         check(sw.kind == "freehand", "1b-2: element kind freehand")
         check(#sw.points >= 4, "1b-2: curved path kept (not 2-point straight), got " .. #sw.points)
-        -- 中间点偏离首末弦 = 曲率保留
+        -- Middle points deviate from the first-last chord = curvature kept
         local p0, pm, pn = sw.points[1], sw.points[2], sw.points[#sw.points]
         local cross = math.abs((pn.x - p0.x) * (pm.y - p0.y) - (pn.y - p0.y) * (pm.x - p0.x))
         check(cross > 0, "1b-2: middle point off the start-end chord (curvature kept)")
         canvas3:_undo()
         check(#canvas3.elements == 0, "1b-2: swipe stroke undoable")
 
-        -- 1b-3. onHold 起笔:零移动长按(真实场景=手不动按住满 hold 定时器)→ hold 创建
-        -- 起点笔画(含起点笔触),不提交;hold_pan 拖动画笔,hold_release 整体落盘
+        -- 1b-3. onHold pen-down: zero-movement long press (real scenario = finger held still for the full hold timer) -> hold creates
+        -- the start stroke (with the start tip), not committed; hold_pan drags the brush, hold_release commits it as a whole
         local canvas4 = newCanvas()
         canvas4:_setTool("brush")
         canvas4:onHold(nil, { pos = { x = 460, y = 400 } })
@@ -196,7 +196,7 @@ do
         check(#canvas4.elements == 1, "1b-3: hold stroke commits once")
         check(#canvas4.elements[1].points >= 3, "1b-3: committed stroke keeps press + drag points")
 
-        -- 1b-4. 无收锋:polyline 起点全宽(旧版起点仅 ~35% 宽度渐变入笔)
+        -- 1b-4. No tapered start: polyline start at full width (the old version faded in from ~35% width)
         local bb = Blitbuffer.new(100, 100, Blitbuffer.TYPE_BB8)
         bb:paintRect(0, 0, 100, 100, Blitbuffer.COLOR_WHITE)
         shapes.polyline(bb,
@@ -206,15 +206,15 @@ do
         check(bb:getPixel(52, 50).a < 128, "1b-4: stroke start full width (right edge)")
         bb:free()
 
-        -- 1b-5. 抽稀步距封顶:线宽 32(旧步距 4)沿小弧的 3px 级采样点不被吞掉
+        -- 1b-5. Thinning step capped: at line width 32 (old step 4) 3px-level sample points along a small arc aren't swallowed
         local canvas6 = newCanvas()
         canvas6:_setTool("brush")
         canvas6.width = 32
         canvas6:onPan(nil, { pos = { x = 200, y = 420 }, start_pos = { x = 200, y = 420 } })
-        canvas6:onPan(nil, { pos = { x = 204, y = 420 }, start_pos = { x = 200, y = 420 } }) -- 达阈值起笔
+        canvas6:onPan(nil, { pos = { x = 204, y = 420 }, start_pos = { x = 200, y = 420 } }) -- threshold reached, stroke starts
         check(canvas6._stroke ~= nil, "1b-5: stroke started")
         for i = 1, 10 do
-            -- x 每 +1,y 交替 +3/+0:封顶步距 3 下奇数步必被记录(旧步距 4 全被跳过)
+            -- x +1 each time, y alternating +3/+0: with the capped step of 3 the odd steps must be recorded (old step 4 skipped them all)
             canvas6:onPan(nil, { pos = { x = 204 + i, y = 420 + (i % 2) * 3 },
                 start_pos = { x = 200, y = 420 } })
         end
@@ -224,8 +224,8 @@ do
         check(#el6.points >= 7, "1b-5: width-32 arc keeps dense samples (min_step capped), got "
             .. #el6.points)
 
-        -- 1b-6. Catmull-Rom 圆度:10 个采样点的 r=18 圆,外缘半径波动 ≤3px
-        -- (旧中点二次曲线同采样下切角,波动 ~3px+;小圆圈不再画成多边形)
+        -- 1b-6. Catmull-Rom roundness: an r=18 circle from 10 sample points, outer radius variation ≤3px
+        -- (the old midpoint quadratic curve cut corners with the same sampling, variation ~3px+; small circles are no longer drawn as polygons)
         local bb2 = Blitbuffer.new(80, 80, Blitbuffer.TYPE_BB8)
         bb2:paintRect(0, 0, 80, 80, Blitbuffer.COLOR_WHITE)
         local cr_pts = {}
@@ -251,7 +251,7 @@ do
             .. tostring(rmin6) .. ".." .. tostring(rmax6))
         bb2:free()
 
-        -- 1b-7. 实时增量渲染与撤销重绘(shapes.polyline)逐像素一致(核心不变量)
+        -- 1b-7. Live incremental rendering identical pixel by pixel to the undo redraw (shapes.polyline) (core invariant)
         local canvas7 = newCanvas()
         canvas7:_setTool("brush")
         canvas7.width = 4
@@ -289,7 +289,7 @@ do
     end
 end
 
--- ============ 2. 字号上限 800 ============
+-- ============ 2. Font size limit 800 ============
 do
     local ok, err = pcall(function()
         local UIManager = require("ui/uimanager")
@@ -307,7 +307,7 @@ do
                 "font size picker should cap at 800, got " .. tostring(captured and captured.name) .. "/"
                 .. tostring(captured and captured.max))
         else
-            print("WARN: 字号调节弹窗未能 headless 构造,跳过 max 断言")
+            print("WARN: font size popup could not be constructed headless, skipping max assertion")
         end
         print("font size max: 800 OK")
     end)
@@ -319,7 +319,7 @@ do
     end
 end
 
--- ============ 3. 画笔 ⇄ 直线(v59b:面板独立条目,无长按) ============
+-- ============ 3. Brush <-> line (v59b: separate panel items, no long-press) ============
 do
     local ok, err = pcall(function()
         local canvas = newCanvas()
@@ -328,23 +328,23 @@ do
         check(canvas.tool == "line", "line_btn should switch to line")
         canvas:_setTool("brush")
         check(canvas.tool == "brush", "set back to brush")
-        -- v59b:工具条目在分类面板里(双列),激活=浅灰底唯一来源;文字无角标
+        -- v59b: tool items live in the category panel (two columns), active = light-grey background is the only source; text has no corner mark
         local bt = canvas:_categoryBt("tool")
         local bbtn = bt.button_by_id["brush_btn"]
         local lbtn = bt.button_by_id["line_btn"]
         check(bbtn ~= nil and lbtn ~= nil, "brush_btn/line_btn should exist in tool panel")
         local LIGHTGRAY = require("ffi/blitbuffer").COLOR_LIGHT_GRAY
         local WHITE = require("ffi/blitbuffer").COLOR_WHITE
-        check(bbtn.text == "画笔" and bbtn[1].background == LIGHTGRAY,
-            "brush active should be 画笔 + lightgray bg")
-        check(lbtn.text == "直线" and lbtn[1].background == WHITE,
+        check(bbtn.text == "Brush" and bbtn[1].background == LIGHTGRAY,
+            "brush active should be Brush + lightgray bg")
+        check(lbtn.text == "Line" and lbtn[1].background == WHITE,
             "line inactive should be white bg")
         canvas:_setTool("line")
         bt = canvas:_categoryBt("tool")
         check(bt.button_by_id["line_btn"][1].background == LIGHTGRAY
             and bt.button_by_id["brush_btn"][1].background == WHITE,
             "line active lightgray, brush white")
-        canvas:_setTool("eraser") -- 切走:直线回白底
+        canvas:_setTool("eraser") -- switch away: line goes back to white
         bt = canvas:_categoryBt("tool")
         check(bt.button_by_id["line_btn"][1].background == WHITE,
             "line inactive should be white bg after switching away")
@@ -359,11 +359,11 @@ do
     end
 end
 
--- ============ 4. 选择对象(移动/复制) ============
+-- ============ 4. Select object (move/copy) ============
 do
     local ok, err = pcall(function()
         local canvas = newCanvas()
-        -- 画两个元素:短线(画笔 swipe) + 圆(圆工具 swipe)
+        -- Draw two elements: short line (brush swipe) + circle (circle tool swipe)
         canvas:_setTool("brush")
         canvas:onSwipe(nil, { pos = { x = 100, y = 300 }, end_pos = { x = 200, y = 300 } })
         canvas:_setTool("circle")
@@ -372,46 +372,46 @@ do
         local line_el = canvas.elements[1]
         local circle_el = canvas.elements[2]
 
-        -- 4a. _pickElementAt 命中/空白
+        -- 4a. _pickElementAt hit/blank
         canvas:_setTool("select")
         local el = canvas:_pickElementAt(150, 300)
         check(el == line_el, "pick should hit line")
         el = canvas:_pickElementAt(30, 300)
         check(el == nil, "pick empty should be nil")
 
-        -- 4a2. 重叠选取:两个对象重叠时选"最上层可见"的对象
+        -- 4a2. Overlapping pick: when two objects overlap pick the "topmost visible" one
         local canvasO = newCanvas()
         canvasO:_setTool("brush")
         canvasO.width = 12
         canvasO.gray = 1.0
-        canvasO:onSwipe(nil, { pos = { x = 100, y = 300 }, end_pos = { x = 400, y = 300 } }) -- 底层 A(y300,墨 294-306)
-        canvasO:onSwipe(nil, { pos = { x = 100, y = 305 }, end_pos = { x = 400, y = 305 } }) -- 上层 B(y305,墨 299-311)
+        canvasO:onSwipe(nil, { pos = { x = 100, y = 300 }, end_pos = { x = 400, y = 300 } }) -- lower A (y300, ink 294-306)
+        canvasO:onSwipe(nil, { pos = { x = 100, y = 305 }, end_pos = { x = 400, y = 305 } }) -- upper B (y305, ink 299-311)
         local a_el, b_el = canvasO.elements[1], canvasO.elements[2]
         canvasO:_setTool("select")
         check(canvasO:_pickElementAt(250, 302) == b_el, "overlap should pick topmost visible")
         check(canvasO:_pickElementAt(250, 308) == b_el, "B-only area picks B")
         check(canvasO:_pickElementAt(250, 294) == a_el, "A-only area picks A")
-        -- 空心圆盖实心矩形:圆心在圆孔内(矩形可见处)→ 选矩形;圆边上 → 选圆
+        -- Hollow circle over a filled rectangle: circle centre inside the hole (rectangle visible) -> select the rectangle; on the circle edge -> select the circle
         local canvasO2 = newCanvas()
         canvasO2:_setTool("rect")
         canvasO2:onSwipe(nil, { pos = { x = 100, y = 200 }, end_pos = { x = 300, y = 400 } })
         local rectF = canvasO2.elements[1]
-        rectF.filled = true -- 实心矩形(底层)
+        rectF.filled = true -- filled rectangle (lower)
         canvasO2:_cacheBBox(rectF)
         canvasO2:_setTool("circle")
-        canvasO2:onSwipe(nil, { pos = { x = 200, y = 300 }, end_pos = { x = 300, y = 300 } }) -- 空心圆 r=100(上层)
+        canvasO2:onSwipe(nil, { pos = { x = 200, y = 300 }, end_pos = { x = 300, y = 300 } }) -- hollow circle r=100 (upper)
         local circH = canvasO2.elements[2]
         canvasO2:_setTool("select")
         check(canvasO2:_pickElementAt(200, 300) == rectF, "hole of top hollow circle reveals filled rect below")
         check(canvasO2:_pickElementAt(300, 300) == circH, "on hollow circle edge picks the circle")
 
-        -- 4b. 点选/取消(先点选再拖动)
+        -- 4b. Tap select/deselect (select first, then drag)
         canvas:onTap(nil, { pos = { x = 150, y = 300 } })
         check(canvas._selected == line_el, "tap should select line")
         canvas:onTap(nil, { pos = { x = 30, y = 300 } })
         check(canvas._selected == nil, "tap empty should deselect")
 
-        -- 4c. 移动:选中圆(点圆右缘),从圆心拖动 +30,+20(避开变形锚点)
+        -- 4c. Move: select the circle (tap its right edge), drag from the centre +30,+20 (avoiding the transform anchors)
         canvas:onTap(nil, { pos = { x = 400, y = 300 } })
         check(canvas._selected == circle_el, "tap should select circle")
         local cx0, cy0 = circle_el.cx, circle_el.cy
@@ -419,10 +419,10 @@ do
         canvas:onPanRelease(nil, { pos = { x = 330, y = 320 } })
         check(circle_el.cx == cx0 + 30 and circle_el.cy == cy0 + 20,
             "circle should move by (30,20), got " .. circle_el.cx .. "," .. circle_el.cy)
-        -- bbox 缓存跟随平移
+        -- bbox cache follows the translation
         local b = circle_el._bbox
         check(b and b.x0 == circle_el.cx - circle_el.rx, "bbox should follow move")
-        -- 撤销恢复 / 重做再移
+        -- Undo restores / redo moves again
         canvas:_undo()
         check(circle_el.cx == cx0 and circle_el.cy == cy0, "undo should restore position")
         canvas:_redo()
@@ -430,7 +430,7 @@ do
         canvas:_undo()
         check(circle_el.cx == cx0 and circle_el.cy == cy0, "undo2 should restore again")
 
-        -- 4d. 复制:切复制模式,拖动产生副本,原对象不动
+        -- 4d. Copy: switch to copy mode, dragging produces a duplicate, the original doesn't move
         canvas:_toggleSelectMode()
         check(canvas.select_mode == "copy", "toggle should switch to copy")
         canvas:onTap(nil, { pos = { x = 400, y = 300 } })
@@ -447,7 +447,7 @@ do
         canvas:_toggleSelectMode()
         check(canvas.select_mode == "move", "toggle back to move")
 
-        -- 4e. 移动像素断言:旧位置变白、新位置有墨(粗线使锚点远离拖动起点)
+        -- 4e. Move pixel assertions: old position turns white, new position has ink (thick line keeps the anchors away from the drag start)
         local canvas2 = newCanvas()
         canvas2:_setTool("brush")
         canvas2.width = 24
@@ -458,7 +458,7 @@ do
         local function a(x, y) return bb:getPixel(x, y) and bb:getPixel(x, y).a end
         check(a(150, 300) == 0, "before move: line ink black, got " .. tostring(a(150, 300)))
         canvas2:onPan(nil, { pos = { x = 150, y = 300 }, start_pos = { x = 150, y = 300 } })
-        canvas2:onPanRelease(nil, { pos = { x = 250, y = 320 } }) -- 移动 +100,+20
+        canvas2:onPanRelease(nil, { pos = { x = 250, y = 320 } }) -- move +100,+20
         check(a(150, 300) == 255, "after move: old position white, got " .. tostring(a(150, 300)))
         check(a(250, 320) == 0, "after move: new position ink, got " .. tostring(a(250, 320)))
         print("select: pick/tap/move/undo-redo/copy/pixels OK")
@@ -471,16 +471,16 @@ do
     end
 end
 
--- ============ 5. 灰度/粗细 随机分级 ============
+-- ============ 5. Grey/width random levels ============
 do
     local ok, err = pcall(function()
         local canvas = newCanvas()
-        -- 固定模式:_resolveGray/_resolveWidth 返回当前值
+        -- Fixed mode: _resolveGray/_resolveWidth return the current value
         canvas.gray = 0.7
         canvas.width = 12
         check(math.abs(canvas:_resolveGray() - 0.7) < 0.001, "fixed gray should return current")
         check(canvas:_resolveWidth() == 12, "fixed width should return current")
-        -- 随机模式:值在 [min,max] 内
+        -- Random mode: value within [min,max]
         canvas:_toggleGrayRandom()
         check(canvas.gray_random == true, "gray random on")
         for _ = 1, 20 do
@@ -488,7 +488,7 @@ do
             check(v >= canvas.gray_min - 0.001 and v <= canvas.gray_max + 0.001,
                 "random gray out of range: " .. tostring(v))
         end
-        -- levels=2:只出 min/max 两端
+        -- levels=2: only the min/max ends
         canvas.gray_min = 0.2
         canvas.gray_max = 0.8
         canvas.gray_levels = 2
@@ -497,7 +497,7 @@ do
             check(math.abs(v - 0.2) < 0.001 or math.abs(v - 0.8) < 0.001,
                 "2-level gray should be min or max, got " .. tostring(v))
         end
-        -- 粗细随机
+        -- Random width
         canvas:_toggleWidthRandom()
         check(canvas.width_random == true, "width random on")
         canvas.width_min = 4
@@ -507,7 +507,7 @@ do
             local v = canvas:_resolveWidth()
             check(v >= 4 - 0.001 and v <= 40 + 0.001, "random width out of range: " .. tostring(v))
         end
-        -- 实际落笔:随机模式下元素使用随机值(创建处解析)
+        -- Real stroke: in random mode the element uses the random value (resolved at creation)
         local canvas2 = newCanvas()
         canvas2:_toggleGrayRandom()
         canvas2:_toggleWidthRandom()
@@ -521,9 +521,9 @@ do
             "stroke gray should be in random range")
         check(s.width >= canvas2.width_min - 0.001 and s.width <= canvas2.width_max + 0.001,
             "stroke width should be in random range")
-        -- 状态栏包含随机标注
+        -- The status bar contains the random marker
         local st = canvas2:_statusText()
-        check(st:find("灰:随机") ~= nil and st:find("粗:随机") ~= nil,
+        check(st:find("G:rand") ~= nil and st:find("W:rand") ~= nil,
             "status should mark random gray/width: " .. st)
         print("gray/width random: fixed/random resolve, levels=2 ends, stroke uses random, status OK")
     end)
@@ -535,39 +535,39 @@ do
     end
 end
 
--- ============ 6. 图层(3 层独立) ============
+-- ============ 6. Layers (3 independent layers) ============
 do
     local ok, err = pcall(function()
         local UIManager = require("ui/uimanager")
         local canvas = newCanvas()
         check(#canvas.layers == 3 and canvas.active_layer == 2, "3 layers, active 2 (default middle)")
-        -- 默认中层画一笔
+        -- One stroke on the default middle layer
         canvas:_setTool("brush")
         canvas:onPan(nil, { pos = { x = 100, y = 300 }, start_pos = { x = 100, y = 300 } })
         canvas:onPan(nil, { pos = { x = 200, y = 300 }, start_pos = { x = 100, y = 300 } })
         canvas:onPanRelease(nil, { pos = { x = 200, y = 300 } })
         check(#canvas.layers[2] == 1 and #canvas.layers[1] == 0 and #canvas.layers[3] == 0,
             "stroke should be on default middle layer")
-        -- 切层3画一笔,层2不受影响
+        -- Switch to layer 3 and draw a stroke, layer 2 is unaffected
         canvas:_switchLayer(3)
         check(canvas.active_layer == 3, "switchLayer should go to 3")
         canvas:onPan(nil, { pos = { x = 300, y = 300 }, start_pos = { x = 300, y = 300 } })
         canvas:onPan(nil, { pos = { x = 400, y = 300 }, start_pos = { x = 300, y = 300 } })
         canvas:onPanRelease(nil, { pos = { x = 400, y = 300 } })
         check(#canvas.layers[2] == 1 and #canvas.layers[3] == 1, "layer3 stroke, layer2 intact")
-        -- 撤销只作用于当前层(层3)
+        -- Undo only affects the current layer (layer 3)
         canvas:_undo()
         check(#canvas.layers[3] == 0 and #canvas.layers[2] == 1, "undo should only affect layer3")
-        -- 重做在层3
+        -- Redo on layer 3
         canvas:_redo()
         check(#canvas.layers[3] == 1, "redo on layer3")
-        -- 切层清选中/进行中状态
+        -- Switching layers clears the selection/in-progress state
         canvas:_setTool("select")
-        canvas:onTap(nil, { pos = { x = 350, y = 300 } }) -- 选中层3的笔画
+        canvas:onTap(nil, { pos = { x = 350, y = 300 } }) -- select the layer-3 stroke
         check(canvas._selected ~= nil, "should select layer3 stroke")
-        canvas:_switchLayer(1) -- 到层1
+        canvas:_switchLayer(1) -- go to layer 1
         check(canvas._selected == nil, "layer switch should clear selection")
-        -- 清空只清当前层(层1)
+        -- Clear only clears the current layer (layer 1)
         canvas:_setTool("brush")
         canvas:onPan(nil, { pos = { x = 100, y = 400 }, start_pos = { x = 100, y = 400 } })
         canvas:onPan(nil, { pos = { x = 200, y = 400 }, start_pos = { x = 100, y = 400 } })
@@ -582,17 +582,17 @@ do
         confirm.ok_callback()
         check(#canvas.layers[1] == 0 and #canvas.layers[2] == 1 and #canvas.layers[3] == 1,
             "clear should only clear active layer (1)")
-        -- 状态栏显示层名(上层/中层/下层);v59b 层显隐条目文字动态跟随
-        check(canvas:_statusText():find("下层") ~= nil, "status should show layer name")
-        -- v59f:图层面板 = 每层单条目(●当前层 + □/☑隐藏;单击切层,长按切隐藏)
+        -- The status bar shows the layer name (top/middle/bottom); v59b layer visibility item text follows dynamically
+        check(canvas:_statusText():find("bottom") ~= nil, "status should show layer name")
+        -- v59f: layer panel = one item per layer (● current layer + ☐/☑ hide; tap switches layer, long-press toggles hidden)
         canvas:_switchLayer(3)
         local sbtn = canvas:_categoryBt("layer").button_by_id["layer3_btn"]
-        check(sbtn ~= nil and sbtn.text == "●上图层(☐隐藏)",
-            "layer3_btn should be ●上图层(☐隐藏), got " .. tostring(sbtn and sbtn.text))
+        check(sbtn ~= nil and sbtn.text == "●Top(☐hide)",
+            "layer3_btn should be ●Top(☐hide), got " .. tostring(sbtn and sbtn.text))
         check(sbtn.hold_callback ~= nil, "layer entry should have hold_callback (toggle hide)")
-        sbtn.hold_callback() -- 长按隐藏
+        sbtn.hold_callback() -- long-press to hide
         sbtn = canvas:_categoryBt("layer").button_by_id["layer3_btn"]
-        check(canvas.layer_visible[3] == false and sbtn.text == "●上图层(☑隐藏)",
+        check(canvas.layer_visible[3] == false and sbtn.text == "●Top(☑hide)",
             "after hold: hidden box checked, got " .. tostring(sbtn and sbtn.text))
         print("layers: per-layer elements/undo, switch clears selection, clear current layer OK")
     end)
@@ -604,7 +604,7 @@ do
     end
 end
 
--- ============ 7. 灰度/粗细 设置对话框 ============
+-- ============ 7. Grey/width settings dialog ============
 do
     local ok, err = pcall(function()
         local UIManager = require("ui/uimanager")
@@ -618,7 +618,7 @@ do
         pcall(function() canvas:_pickGray() end)
         pcall(function() canvas:_pickWidth() end)
         UIManager.show = orig_show
-        -- 在弹窗控件树里找 ButtonTable(结构:popup→CenterContainer→FrameContainer→[VerticalGroup→]ButtonTable)
+        -- Find the ButtonTable in the popup widget tree (structure: popup->CenterContainer->FrameContainer->[VerticalGroup->]ButtonTable)
         local function findButtonTable(w)
             if w and w.button_by_id then
                 return w
@@ -644,7 +644,7 @@ do
                 and wb.button_by_id["width_levels_btn"] and wb.button_by_id["width_fixed_btn"],
                 "width dialog should have 4 buttons")
         else
-            print("WARN: 灰度/粗细弹窗未能 headless 构造,跳过按钮断言")
+            print("WARN: grey/width popup could not be constructed headless, skipping button assertions")
         end
         print("gray/width dialogs OK")
     end)
@@ -656,58 +656,58 @@ do
     end
 end
 
--- ============ 8. 图层命名/显示隐藏/居中菜单 ============
+-- ============ 8. Layer naming/show-hide/centred menu ============
 do
     local ok, err = pcall(function()
         local UIManager = require("ui/uimanager")
         local canvas = newCanvas()
-        -- 默认层(中层)画一笔
+        -- One stroke on the default layer (middle)
         canvas:_setTool("brush")
         canvas:onPan(nil, { pos = { x = 100, y = 300 }, start_pos = { x = 100, y = 300 } })
         canvas:onPan(nil, { pos = { x = 200, y = 300 }, start_pos = { x = 100, y = 300 } })
         canvas:onPanRelease(nil, { pos = { x = 200, y = 300 } })
-        -- 注意:显隐切换走乒乓缓冲交换,canvas_bb 引用会变,必须动态读取
+        -- Note: visibility toggles swap the ping-pong buffer, so the canvas_bb reference changes and must be read dynamically
         local function a(x, y) return canvas.canvas_bb:getPixel(x, y) and canvas.canvas_bb:getPixel(x, y).a end
         check(a(150, 300) == 0, "middle layer ink visible, got " .. tostring(a(150, 300)))
-        -- 长按:隐藏当前层 → 全画布重绘后墨迹消失
+        -- Long-press: hide the current layer -> after the full canvas redraw the ink disappears
         canvas:_toggleLayerVisible()
         check(canvas.layer_visible[2] == false, "toggle should hide middle layer")
         canvas:_renderAll()
         check(a(150, 300) == 255, "hidden layer ink should disappear, got " .. tostring(a(150, 300)))
-        -- 状态栏带(隐)
+        -- The status bar shows (hide)
         local st = canvas:_statusText()
-        check(st:find("中层") ~= nil and st:find("隐") ~= nil, "status should mark hidden: " .. st)
-        -- 再长按显示恢复
+        check(st:find("middle") ~= nil and st:find("(hide)", 1, true) ~= nil, "status should mark hidden: " .. st)
+        -- Long-press again to show and restore
         canvas:_toggleLayerVisible()
         check(canvas.layer_visible[2] == true, "toggle should show middle layer again")
         canvas:_renderAll()
         check(a(150, 300) == 0, "shown layer ink should return")
-        -- 隐藏层不进保存裁剪(所见即所得)
+        -- Hidden layers aren't part of the save crop (WYSIWYG)
         canvas:_toggleLayerVisible()
         local bbox = canvas:_contentBBox()
         check(bbox == nil, "hidden layer content should not be exported")
         canvas:_toggleLayerVisible()
         bbox = canvas:_contentBBox()
         check(bbox ~= nil, "visible layer content should be exported")
-        -- v59f:图层面板 = 一级"图层"分类,每层单条目(●当前层 + □/☑隐藏;单击切层,长按切隐藏)
+        -- v59f: layer panel = top-level "Layer" category, one item per layer (● current layer + ☐/☑ hide; tap switches layer, long-press toggles hidden)
         local lbt = canvas:_categoryBt("layer")
         check(lbt.button_by_id["layer3_btn"] ~= nil and lbt.button_by_id["layer2_btn"] ~= nil,
             "layer panel should have one entry per layer")
         canvas:_switchLayer(3)
         lbt = canvas:_categoryBt("layer")
-        check(lbt.button_by_id["layer3_btn"].text == "●上图层(☐隐藏)",
+        check(lbt.button_by_id["layer3_btn"].text == "●Top(☐hide)",
             "current layer shows ●, got " .. lbt.button_by_id["layer3_btn"].text)
-        check(lbt.button_by_id["layer1_btn"].text == "○下图层(☐隐藏)",
+        check(lbt.button_by_id["layer1_btn"].text == "○Bottom(☐hide)",
             "other layer shows ○")
-        -- 长按切隐藏(非当前层,中层)
+        -- Long-press toggles hidden (non-current layer, middle)
         lbt.button_by_id["layer2_btn"].hold_callback()
         check(canvas.layer_visible[2] == false, "hold hides layer2")
         lbt = canvas:_categoryBt("layer")
-        check(lbt.button_by_id["layer2_btn"].text == "○中图层(☑隐藏)",
+        check(lbt.button_by_id["layer2_btn"].text == "○Mid(☑hide)",
             "hidden layer shows checked box")
         lbt.button_by_id["layer2_btn"].hold_callback()
         check(canvas.layer_visible[2] == true, "hold shows layer2 again")
-        -- 图层面板点选保持打开(close_on_tap = false 语义在 _showCategoryMenu,此处只验条目存在)
+        -- Tapping in the layer panel keeps it open (close_on_tap = false semantics live in _showCategoryMenu; only item existence is checked here)
         print("layers: names/hide-show/export/layer panel OK")
     end)
     if ok then
@@ -718,7 +718,7 @@ do
     end
 end
 
--- ============ 9. 笔触形状 ============
+-- ============ 9. Brush tip shapes ============
 do
     local ok, err = pcall(function()
         local Blitbuffer = require("ffi/blitbuffer")
@@ -747,7 +747,7 @@ do
         check(a(t, 50, 50) == 0 and a(t, 40, 40) == 0 and a(t, 60, 60) == 0, "backslash pixels")
         t = drawTip("circle")
         check(a(t, 50, 50) == 0, "circle pixels")
-        -- 元素携带 tip:画笔/直线带,矩形不带
+        -- Elements carry tip: brush/line do, rectangles don't
         local canvas = newCanvas()
         canvas.tip = "triangle"
         canvas:_setTool("brush")
@@ -762,7 +762,7 @@ do
         canvas:onSwipe(nil, { pos = { x = 100, y = 500 }, end_pos = { x = 200, y = 550 } })
         check(canvas.elements[3].tip == nil or canvas.elements[3].tip == "circle",
             "rect should keep circle tip")
-        -- 笔触菜单构造(7 行预览+按钮 + 1 取消;点触走原生 Button 自带手势)
+        -- Tip menu construction (7 rows of preview + button + 1 cancel; taps go through the native Button's own gestures)
         local const = require("drawingpad.const")
         local UIManager = require("ui/uimanager")
         local orig_show = UIManager.show
@@ -771,10 +771,10 @@ do
         pcall(function() canvas:_showTipMenu() end)
         UIManager.show = orig_show
         if captured then
-            -- 弹窗本身必须注册手势(否则 stop_events_propagation 吞掉所有输入)
+            -- The popup itself must register gestures (otherwise stop_events_propagation swallows all input)
             check(captured.ges_events ~= nil and captured.ges_events.TapSelect ~= nil,
                 "tip popup must register TapSelect gesture")
-            -- 递归收集:带 callback 的原生 Button、带 BB image 的 ImageWidget 预览
+            -- Recursively collect: native Buttons with a callback, ImageWidget previews with a BB image
             local btns, previews = {}, {}
             local function walk(w, depth)
                 if type(w) ~= "table" or depth > 12 then return end
@@ -785,12 +785,12 @@ do
             walk(captured, 0)
             check(#btns >= 8, "tip menu should have 7 tip buttons + cancel, got " .. #btns)
             check(#previews >= 7, "tip menu should show 7 shape previews, got " .. #previews)
-            -- 触发第一个笔触按钮 callback,确认 canvas.tip 被设置
+            -- Fire the first tip button callback and confirm canvas.tip is set
             pcall(function() btns[1].callback() end)
             check(canvas.tip == const.TIPS[1][1],
                 "firing first tip should set canvas.tip to " .. const.TIPS[1][1])
         else
-            print("WARN: 笔触菜单未能 headless 构造,跳过弹窗断言")
+            print("WARN: tip menu could not be constructed headless, skipping popup assertions")
         end
         print("tips: shapes pixels / element carry / menu OK")
     end)
@@ -802,25 +802,25 @@ do
     end
 end
 
--- ============ 10. 连接 bug 修复 / 双指收笔 / 标签居中 ============
+-- ============ 10. Joining bug fix / two-finger pen-up / centred labels ============
 do
     local ok, err = pcall(function()
         local canvas = newCanvas()
         canvas:_setTool("brush")
-        -- 注入残留笔画(模拟上一手势漏收 pan_release)
+        -- Inject a leftover stroke (simulates the previous gesture missing pan_release)
         canvas._stroke = { kind = "freehand", points = { { x = 100, y = 300 }, { x = 200, y = 300 } }, gray = 1.0, width = 4 }
-        -- 新一次落笔:start_pos 与笔画首点不同 → 跨手势保护按末点收笔
+        -- A new pen-down: start_pos differs from the stroke's first point -> cross-gesture protection finishes it at the last point
         canvas:onPan(nil, { pos = { x = 400, y = 300 }, start_pos = { x = 400, y = 300 } })
         check(#canvas.elements == 1 and #canvas.elements[1].points == 2,
             "stale stroke should be committed without extension")
         local last = canvas.elements[1].points[#canvas.elements[1].points]
         check(last.x == 200 and last.y == 300, "stale stroke last point unchanged")
-        -- 新笔画从新按下点起笔(不与旧笔相连)
+        -- The new stroke starts at the new touch-down point (not joined to the old stroke)
         canvas:onPan(nil, { pos = { x = 450, y = 300 }, start_pos = { x = 400, y = 300 } })
         canvas:onPanRelease(nil, { pos = { x = 460, y = 300 } })
         check(#canvas.elements == 2 and canvas.elements[2].points[1].x == 400,
             "new stroke should start at new press")
-        -- 双指打断:进行中笔画按末点收笔
+        -- Two-finger interruption: the in-progress stroke is finished at its last point
         local canvas2 = newCanvas()
         canvas2:_setTool("brush")
         canvas2:onPan(nil, { pos = { x = 100, y = 300 }, start_pos = { x = 100, y = 300 } })
@@ -828,15 +828,15 @@ do
         check(canvas2._stroke ~= nil, "stroke in progress")
         canvas2:onTwoFingerPan()
         check(canvas2._stroke == nil and #canvas2.elements == 1, "two-finger should finish stroke")
-        -- v59d:text_fn 动态条目(图层显隐勾选)切换后 setText 传当前宽度,按钮几何恒定
+        -- v59d: after a text_fn dynamic item (layer hide checkbox) toggles, setText gets the current width, button geometry stays constant
         canvas2._panel_bt = canvas2:_categoryBt("layer")
-        local vbtn = canvas2._panel_bt.button_by_id["layer1_btn"] -- 默认当前层 = 下层(合并条目)
+        local vbtn = canvas2._panel_bt.button_by_id["layer1_btn"] -- default current layer = bottom (merged item)
         local w0 = vbtn.width
-        vbtn.hold_callback() -- 长按隐藏
+        vbtn.hold_callback() -- long-press to hide
         vbtn = canvas2:_categoryBt("layer").button_by_id["layer1_btn"]
         check(canvas2.layer_visible[1] == false and vbtn.width == w0,
             "setText should keep button width, got " .. tostring(vbtn.width) .. " vs " .. tostring(w0))
-        vbtn.hold_callback() -- 长按显示
+        vbtn.hold_callback() -- long-press to show
         vbtn = canvas2:_categoryBt("layer").button_by_id["layer1_btn"]
         check(canvas2.layer_visible[1] == true and vbtn.width == w0,
             "toggle back keeps width")
@@ -850,13 +850,13 @@ do
     end
 end
 
--- ============ 11. 合并按钮 / 保存对话框 ============
+-- ============ 11. Combined buttons / save dialog ============
 do
     local ok, err = pcall(function()
         local UIManager = require("ui/uimanager")
         local canvas = newCanvas()
-        -- v59b:功能面板 = 撤销/重做/清空/保存 独立条目(无合并按钮、无长按)
-        -- v62d:保存=工程(.drawing)、输出=PNG(原保存改名)
+        -- v59b: function panel = separate Undo/Redo/Clear/Save items (no combined buttons, no long-press)
+        -- v62d: Save = project (.drawing), Export = PNG (the old Save renamed)
         local Blitbuffer = require("ffi/blitbuffer")
         local funcBt = function() return canvas:_categoryBt("func") end
         local ubtn = funcBt().button_by_id["undo_btn"]
@@ -868,15 +868,15 @@ do
         check(ubtn ~= nil and ubtn.callback ~= nil and ubtn.hold_callback == nil,
             "undo_btn should be click-only (no hold)")
         check(rbtn ~= nil and cbtn ~= nil and sbtn ~= nil, "redo/clear/save entries exist")
-        check(ubtn.text == "撤销" and rbtn.text == "重做" and cbtn.text == "清空"
-            and sbtn.text == "输出", "func labels should be 撤销/重做/清空/输出")
-        check(pbtn ~= nil and pbtn.text == "保存" and obtn ~= nil and obtn.text == "打开",
+        check(ubtn.text == "Undo" and rbtn.text == "Redo" and cbtn.text == "Clear"
+            and sbtn.text == "Export", "func labels should be Undo/Redo/Clear/Export")
+        check(pbtn ~= nil and pbtn.text == "Save" and obtn ~= nil and obtn.text == "Open",
             "project save/open entries exist")
         check(ubtn[1].background == Blitbuffer.COLOR_WHITE
             and cbtn[1].background == Blitbuffer.COLOR_WHITE, "func entries always white bg")
-        -- 刷新不崩
+        -- Refresh doesn't crash
         canvas:_refreshCanvas()
-        -- 画两笔:撤销/重做条目单击生效
+        -- Draw two strokes: the undo/redo items work on a single tap
         canvas:_setTool("brush")
         canvas:onPan(nil, { pos = { x = 100, y = 300 }, start_pos = { x = 100, y = 300 } })
         canvas:onPan(nil, { pos = { x = 200, y = 300 }, start_pos = { x = 100, y = 300 } })
@@ -885,11 +885,11 @@ do
         canvas:onPan(nil, { pos = { x = 200, y = 400 }, start_pos = { x = 100, y = 400 } })
         canvas:onPanRelease(nil, { pos = { x = 200, y = 400 } })
         check(#canvas.elements == 2, "two strokes")
-        canvas:_undo() -- 撤销条目
+        canvas:_undo() -- undo item
         check(#canvas.elements == 1, "undo entry should undo")
-        canvas:_redo() -- 重做条目
+        canvas:_redo() -- redo item
         check(#canvas.elements == 2, "redo entry should redo")
-        -- 保存对话框:文件名输入 + 文件夹按钮
+        -- Save dialog: filename input + folder button
         local orig_show = UIManager.show
         local captures = {}
         UIManager.show = function(self, w) captures[#captures + 1] = w; return true end
@@ -902,9 +902,9 @@ do
             check(fb ~= nil, "save dialog should have folder button")
             check(type(dlg.getInputText) == "function", "save dialog should have filename input")
         else
-            print("WARN: 保存对话框未能 headless 构造,跳过断言")
+            print("WARN: save dialog could not be constructed headless, skipping assertions")
         end
-        -- 文件夹菜单:有子文件夹时弹出 Menu 且列出子文件夹(验证 lfs.dir 迭代器修复)
+        -- Folder menu: with subfolders it pops up a Menu listing them (verifies the lfs.dir iterator fix)
         do
             local lfs = require("libs/libkoreader-lfs")
             local DataStorage = require("datastorage")
@@ -922,12 +922,12 @@ do
                 local has_sub = false
                 for _, row in ipairs(captures2[1].buttons) do
                     for _, b in ipairs(row) do
-                        if b.text == "_test_sub/" then has_sub = true end -- 文件夹项带 "/" 后缀
+                        if b.text == "_test_sub/" then has_sub = true end -- folder items have a "/" suffix
                     end
                 end
                 check(has_sub, "folder menu should list subfolder (lfs.dir fix)")
             else
-                print("WARN: 文件夹菜单未能 headless 构造,跳过子文件夹断言")
+                print("WARN: folder menu could not be constructed headless, skipping subfolder assertions")
             end
             pcall(lfs.rmdir, sub)
         end
@@ -941,23 +941,23 @@ do
     end
 end
 
--- ============ 12. 变形(四角锚点缩放/旋转/切换/poly/撤销) ============
--- 锚点机制:选中显示四角(默认缩放模式),再次点选同一对象切换为旋转模式(拖角旋转),
--- 再点选切回;点空白取消选择;文字不支持旋转(不切换)。顶部独立旋转锚已移除。
+-- ============ 12. Transforms (four-corner anchor scale/rotate/toggle/poly/undo) ============
+-- Anchor mechanism: selecting shows four corners (scale mode by default), tapping the same object again switches to rotate mode (drag a corner to rotate),
+-- tap again to switch back; tapping blank space deselects; text doesn't support rotation (no toggle). The separate top rotate anchor was removed.
 do
     local ok, err = pcall(function()
-        -- 缩放:拖 se 锚放大矩形(对边固定)
+        -- Scale: drag the se anchor to enlarge the rectangle (opposite edge fixed)
         local canvas = newCanvas()
         canvas:_setTool("rect")
         canvas:onSwipe(nil, { pos = { x = 100, y = 300 }, end_pos = { x = 200, y = 400 } })
         local rect = canvas.elements[1]
         canvas:_setTool("select")
-        canvas:onTap(nil, { pos = { x = 100, y = 350 } }) -- 空心矩形点左边缘选中
+        canvas:onTap(nil, { pos = { x = 100, y = 350 } }) -- tap the left edge of the hollow rectangle to select it
         check(canvas._selected == rect, "select rect via edge tap")
         check(canvas._handle_mode == "scale", "default handle mode is scale")
         check(canvas:_hitHandle(204, 404) == "se", "hit se handle")
         check(canvas:_hitHandle(204, 350) == nil, "no midpoint handle (4 corners only)")
-        -- 命中半径 48:偏离角点 40px 内仍可命中(便于手指点中);超过 48 则不算
+        -- Hit radius 48: within 40px of a corner still hits (easy for fingers); beyond 48 doesn't count
         check(canvas:_hitHandle(168, 376) == "se", "hit within 48px radius of corner")
         check(canvas:_hitHandle(150, 360) == nil, "miss beyond hit radius")
         canvas:onPan(nil, { pos = { x = 204, y = 404 }, start_pos = { x = 204, y = 404 } })
@@ -969,21 +969,21 @@ do
         canvas:_redo()
         check(rect.x1 == 250 and rect.y1 == 450, "redo transform reapplies")
 
-        -- 再次点选切换 缩放↔旋转;点空白取消选择(模式回到缩放)。
-        -- 注意:undo/redo 会清空选中,故先重新点选一次,再一次点选才是切换
-        canvas:onTap(nil, { pos = { x = 100, y = 400 } }) -- 重新点选(缩放后矩形左边缘)
+        -- Tapping again toggles scale<->rotate; tapping blank space deselects (mode back to scale).
+        -- Note: undo/redo clears the selection, so tap once to reselect, and the next tap is the toggle
+        canvas:onTap(nil, { pos = { x = 100, y = 400 } }) -- reselect (left edge of the scaled rectangle)
         check(canvas._selected == rect, "reselect rect after redo")
         check(canvas._handle_mode == "scale", "reselect resets to scale")
-        canvas:onTap(nil, { pos = { x = 100, y = 400 } }) -- 再点选 → 旋转模式
+        canvas:onTap(nil, { pos = { x = 100, y = 400 } }) -- tap again -> rotate mode
         check(canvas._handle_mode == "rotate", "re-tap toggles to rotate")
         check(canvas:_hitHandle(254, 454) == "se", "rotate mode hits se corner")
         canvas:onTap(nil, { pos = { x = 100, y = 400 } })
         check(canvas._handle_mode == "scale", "re-tap toggles back to scale")
-        canvas:onTap(nil, { pos = { x = 500, y = 500 } }) -- 点空白
+        canvas:onTap(nil, { pos = { x = 500, y = 500 } }) -- tap blank space
         check(canvas._selected == nil, "tap blank deselects")
         check(canvas._handle_mode == "scale", "deselect resets handle mode")
 
-        -- 旋转:再次点选切换后拖角,水平线绕中心转 +90° 变垂直
+        -- Rotate: after toggling with another tap drag a corner, a horizontal line rotates +90° about its centre to vertical
         local canvas2 = newCanvas()
         canvas2:_setTool("brush")
         canvas2:onSwipe(nil, { pos = { x = 100, y = 300 }, end_pos = { x = 200, y = 300 } })
@@ -991,14 +991,14 @@ do
         canvas2:_setTool("select")
         canvas2:onTap(nil, { pos = { x = 150, y = 300 } })
         check(canvas2._selected == line, "select line")
-        canvas2:onTap(nil, { pos = { x = 150, y = 300 } }) -- 再次点选 → 旋转模式
+        canvas2:onTap(nil, { pos = { x = 150, y = 300 } }) -- tap again -> rotate mode
         check(canvas2._handle_mode == "rotate", "re-tap line toggles rotate")
-        -- 线宽 4 → bbox(96,296)-(204,304) pad4;细线四角间距 16px < 命中半径 24,
-        -- 相邻角会同时命中(旋转结果与命中哪个角无关),只断言命中任一四角
+        -- Line width 4 -> bbox(96,296)-(204,304) pad4; the thin line's corners are 16px apart < hit radius 24,
+        -- neighbouring corners hit at the same time (the rotation result doesn't depend on which corner), only assert that one of the four hits
         check(canvas2:_hitHandle(208, 308) ~= nil, "rotate mode hits a corner")
         check(canvas2:_hitHandle(150, 292) == nil, "rotate mode has no top/edge handle")
         canvas2:onPan(nil, { pos = { x = 208, y = 308 }, start_pos = { x = 208, y = 308 } })
-        canvas2:onPanRelease(nil, { pos = { x = 142, y = 358 } }) -- 角偏移 (58,8) 旋 90° → (-8,58)
+        canvas2:onPanRelease(nil, { pos = { x = 142, y = 358 } }) -- corner offset (58,8) rotated 90° -> (-8,58)
         local p1, p2 = line.points[1], line.points[2]
         local xs_ok = math.abs(p1.x - 150) < 3 and math.abs(p2.x - 150) < 3
         local ys = { p1.y, p2.y }
@@ -1014,29 +1014,29 @@ do
         canvas2:_redo()
         check(math.abs(line.points[1].x - 150) < 3, "redo rotation reapplies")
 
-        -- 矩形旋转 → poly(4 点描边,实心退化为描边)
+        -- Rectangle rotation -> poly (4-point outline, filled degrades to outline)
         local canvas3 = newCanvas()
         canvas3:_setTool("rect")
         canvas3:onSwipe(nil, { pos = { x = 100, y = 300 }, end_pos = { x = 200, y = 400 } })
         canvas3:_setTool("select")
         canvas3:onTap(nil, { pos = { x = 100, y = 350 } })
-        canvas3:onTap(nil, { pos = { x = 100, y = 350 } }) -- 再点选 → 旋转模式
+        canvas3:onTap(nil, { pos = { x = 100, y = 350 } }) -- tap again -> rotate mode
         check(canvas3._handle_mode == "rotate", "rect re-tap toggles rotate")
         canvas3:onPan(nil, { pos = { x = 204, y = 404 }, start_pos = { x = 204, y = 404 } })
-        canvas3:onPanRelease(nil, { pos = { x = 96, y = 404 } }) -- se 角绕 (150,350) 旋 +90° → sw 位置
+        canvas3:onPanRelease(nil, { pos = { x = 96, y = 404 } }) -- se corner rotated +90° about (150,350) -> sw position
         local poly = canvas3.elements[1]
         check(poly.kind == "poly" and #poly.points == 4 and not poly.filled,
             "rotated rect should become poly with 4 points")
-        -- 角点 (100,300) 绕 (150,350) 转 90° → (200,300),poly 描边应有墨
+        -- Corner (100,300) rotated 90° about (150,350) -> (200,300), the poly outline should have ink
         local bb = canvas3.canvas_bb
         local px = bb:getPixel(200, 300) and bb:getPixel(200, 300).a
         check(px == 0, "poly edge ink at rotated corner, got " .. tostring(px))
-        -- poly 撤销恢复为 rect
+        -- poly undo restores the rect
         canvas3:_undo()
         check(canvas3.elements[1].kind == "rect" and canvas3.elements[1].x1 == 200,
             "undo poly rotation restores rect")
 
-        -- 圆:旋转模式拖角 +90°,切回缩放模式拖角成椭圆
+        -- Circle: rotate mode drag a corner +90°, switch back to scale mode and drag a corner into an ellipse
         local canvas5 = newCanvas()
         canvas5:_setTool("circle")
         canvas5:onSwipe(nil, { pos = { x = 200, y = 300 }, end_pos = { x = 300, y = 300 } }) -- r=100
@@ -1044,36 +1044,36 @@ do
         canvas5:_setTool("select")
         canvas5:onTap(nil, { pos = { x = 300, y = 300 } })
         check(canvas5._selected == circle, "select circle")
-        canvas5:onTap(nil, { pos = { x = 300, y = 300 } }) -- 再点选 → 旋转模式
+        canvas5:onTap(nil, { pos = { x = 300, y = 300 } }) -- tap again -> rotate mode
         check(canvas5._handle_mode == "rotate", "circle re-tap toggles rotate")
-        -- bbox(100,200)-(300,400) pad4 → se (304,404),绕中心 (200,300) 旋 +90° → sw (96,404)
+        -- bbox(100,200)-(300,400) pad4 -> se (304,404), rotated +90° about the centre (200,300) -> sw (96,404)
         canvas5:onPan(nil, { pos = { x = 304, y = 404 }, start_pos = { x = 304, y = 404 } })
         canvas5:onPanRelease(nil, { pos = { x = 96, y = 404 } })
         check(circle.rot ~= nil and math.abs(circle.rot - math.pi / 2) < 0.05,
             "circle rotated 90, got " .. tostring(circle.rot))
-        -- 切回缩放模式:拖 OBB 角 → 非等比椭圆,向外可拉大(旋转后 OBB 缩放语义)
-        canvas5:onTap(nil, { pos = { x = 300, y = 300 } }) -- 再点选 → 缩放模式
+        -- Back to scale mode: drag an OBB corner -> non-uniform ellipse, can be enlarged outwards (OBB scale semantics after rotation)
+        canvas5:onTap(nil, { pos = { x = 300, y = 300 } }) -- tap again -> scale mode
         check(canvas5._handle_mode == "scale", "re-tap toggles back to scale")
         local fc5 = canvas5:_frameCorners(circle)
-        local s5x, s5y = fc5[3].x, fc5[3].y -- 旋转 90° 圆的 OBB se 角
+        local s5x, s5y = fc5[3].x, fc5[3].y -- OBB se corner of the circle rotated 90°
         canvas5:onPan(nil, { pos = { x = s5x, y = s5y }, start_pos = { x = s5x, y = s5y } })
-        canvas5:onPanRelease(nil, { pos = { x = s5x, y = s5y + 300 } }) -- 沿一轴拉大(释放点避开底部工具栏区)
+        canvas5:onPanRelease(nil, { pos = { x = s5x, y = s5y + 300 } }) -- enlarge along one axis (release point avoids the bottom toolbar area)
         check(circle.rx ~= circle.ry,
             "circle scaled non-uniformly, got " .. tostring(circle.rx) .. "/" .. tostring(circle.ry))
         check(math.max(circle.rx, circle.ry) > 100,
             "rotated circle grows when corner dragged outward, got " .. tostring(circle.rx) .. "/" .. tostring(circle.ry))
-        -- 撤销:先恢复圆(等半径),再恢复旋转
+        -- Undo: first restore the circle (equal radii), then restore the rotation
         canvas5:_undo()
         check(math.abs(circle.rx - circle.ry) < 0.01, "undo scale restores round circle")
         canvas5:_undo()
         check((circle.rot or 0) == 0, "undo rotation restores rot")
 
-        -- 文字:再次点选不切换旋转(文字不支持旋转,四角仍缩放)
+        -- Text: tapping again doesn't toggle rotation (text doesn't support rotation, the four corners still scale)
         local canvas6 = newCanvas()
         local tel = {
             kind = "text",
             x = 400, y = 200,
-            text = "文字测试",
+            text = "Text test",
             font = canvas6.font,
             size = canvas6.font_size,
             gray = 1.0,
@@ -1081,12 +1081,12 @@ do
         table.insert(canvas6.elements, tel)
         canvas6:_cacheBBox(tel)
         canvas6:_setTool("select")
-        canvas6:onTap(nil, { pos = { x = 400, y = 220 } }) -- 点文字 bbox 内
+        canvas6:onTap(nil, { pos = { x = 400, y = 220 } }) -- tap inside the text bbox
         check(canvas6._selected == tel, "select text")
-        canvas6:onTap(nil, { pos = { x = 400, y = 220 } }) -- 再点选:文字现在支持旋转
+        canvas6:onTap(nil, { pos = { x = 400, y = 220 } }) -- tap again: text now supports rotation
         check(canvas6._handle_mode == "rotate", "text re-tap toggles rotate")
 
-        -- 倾斜椭圆:选取框/锚点用 OBB 四角(紧贴边界),不再用悬空的轴对齐 AABB 大框
+        -- Tilted ellipse: selection box/anchors use the OBB corners (hugging the boundary), no longer the floating axis-aligned AABB box
         local canvas7 = newCanvas()
         canvas7:_setTool("circle")
         canvas7:onSwipe(nil, { pos = { x = 200, y = 300 }, end_pos = { x = 300, y = 300 } }) -- r=100
@@ -1095,17 +1095,17 @@ do
         tilted.rot = math.pi / 4
         canvas7:_cacheBBox(tilted)
         canvas7:_setTool("select")
-        canvas7:onTap(nil, { pos = { x = 271, y = 371 } }) -- 椭圆边界上(局部 (100,0) 旋转 45° 附近)
+        canvas7:onTap(nil, { pos = { x = 271, y = 371 } }) -- on the ellipse boundary (near local (100,0) rotated 45°)
         check(canvas7._selected == tilted, "select tilted ellipse")
         local fc = canvas7:_frameCorners(tilted)
         check(fc and #fc == 4, "tilted ellipse has OBB frame corners")
-        -- OBB 角 ≈ (244,403);轴对齐 AABB 角 (303,403) 悬空,不再是锚点
+        -- OBB corner ≈ (244,403); the axis-aligned AABB corner (303,403) floats and is no longer an anchor
         check(canvas7:_hitHandle(303, 403) == nil, "AABB corner no longer an anchor")
         check(canvas7:_hitHandle(244, 403) ~= nil, "OBB corner is an anchor")
 
-        -- 文字旋转:再点选切旋转模式,拖对角旋转 ~180°,撤销恢复;锚点命中半径 64
+        -- Text rotation: tap again to switch to rotate mode, drag the opposite corner to rotate ~180°, undo restores; anchor hit radius 64
         local canvasT = newCanvas()
-        local tel = { kind = "text", x = 400, y = 200, text = "旋转测试", font = canvasT.font, size = canvasT.font_size, gray = 1.0 }
+        local tel = { kind = "text", x = 400, y = 200, text = "Rotate test", font = canvasT.font, size = canvasT.font_size, gray = 1.0 }
         table.insert(canvasT.elements, tel)
         canvasT:_cacheBBox(tel)
         canvasT:_setTool("select")
@@ -1118,7 +1118,7 @@ do
         local t0x, t0y = fcT[1].x, fcT[1].y
         canvasT:onPan(nil, { pos = { x = t0x, y = t0y }, start_pos = { x = t0x, y = t0y } })
         check(canvasT._transform ~= nil, "text transform started")
-        local t1x, t1y = fcT[3].x, fcT[3].y -- 对角 = 旋转 180°
+        local t1x, t1y = fcT[3].x, fcT[3].y -- opposite corner = rotate 180°
         canvasT:onPan(nil, { pos = { x = t1x, y = t1y }, start_pos = { x = t0x, y = t0y } })
         canvasT:onPanRelease(nil, { pos = { x = t1x, y = t1y } })
         local rot_v = tel.rot or 0
@@ -1126,12 +1126,12 @@ do
             "text rotated ~180, got " .. tostring(rot_v))
         canvasT:_undo()
         check((tel.rot or 0) == 0, "undo text rotation restores")
-        -- 文字锚点命中半径 64(普通 48):距角 55px 命中、70px 不中
-        canvasT:onTap(nil, { pos = { x = 400, y = 220 } }) -- 重新选中(undo 清选中)
+        -- Text anchor hit radius 64 (normal 48): 55px from the corner hits, 70px doesn't
+        canvasT:onTap(nil, { pos = { x = 400, y = 220 } }) -- reselect (undo cleared the selection)
         local fcR = canvasT:_frameCorners(tel)
         check(canvasT:_hitHandle(fcR[1].x - 55, fcR[1].y) ~= nil, "text anchor hit within 64px")
         check(canvasT:_hitHandle(fcR[1].x - 70, fcR[1].y) == nil, "text anchor miss beyond 64px")
-        -- 普通对象锚点仍是 48:距角 55px 不命中
+        -- Normal object anchors are still 48: 55px from the corner doesn't hit
         local canvasR = newCanvas()
         canvasR:_setTool("rect")
         canvasR:onSwipe(nil, { pos = { x = 100, y = 300 }, end_pos = { x = 200, y = 400 } })
@@ -1139,9 +1139,9 @@ do
         canvasR:onTap(nil, { pos = { x = 100, y = 350 } })
         check(canvasR:_hitHandle(149, 404) == nil, "rect anchor miss beyond 48px (55px)")
 
-        -- 文字拉伸:非等比缩放 → 均匀部分进字号、残余进 sx/sy 像素缩放
+        -- Text stretch: non-uniform scale -> the uniform part goes into font size, the remainder into sx/sy pixel scaling
         local canvasS = newCanvas()
-        local tel2 = { kind = "text", x = 100, y = 100, text = "拉伸", font = canvasS.font, size = 24, gray = 1.0 }
+        local tel2 = { kind = "text", x = 100, y = 100, text = "Stretch", font = canvasS.font, size = 24, gray = 1.0 }
         table.insert(canvasS.elements, tel2)
         canvasS:_cacheBBox(tel2)
         local sb2 = tel2._bbox
@@ -1149,18 +1149,18 @@ do
         check(tel2.size == 36, "text uniform part into size, got " .. tostring(tel2.size))
         check(math.abs((tel2.sx or 1) * 1.5 - 2) < 0.01 and math.abs((tel2.sy or 1) * 1.5 - 1) < 0.01,
             "text total width factor 2 / height 1, got sx " .. tostring(tel2.sx) .. " sy " .. tostring(tel2.sy))
-        -- 旋转矩形缩放:OBB 角锚缩放——切回缩放模式后拖角向外可拉大(修"旋转后只能缩小")
+        -- Rotated rectangle scaling: OBB corner anchor scaling - after switching back to scale mode dragging a corner outwards enlarges it (fixes "can only shrink after rotation")
         local canvasR2 = newCanvas()
         canvasR2:_setTool("rect")
         canvasR2:onSwipe(nil, { pos = { x = 100, y = 300 }, end_pos = { x = 200, y = 400 } })
         local poly2 = canvasR2.elements[1]
         canvasR2:_setTool("select")
         canvasR2:onTap(nil, { pos = { x = 100, y = 350 } })
-        canvasR2:onTap(nil, { pos = { x = 100, y = 350 } }) -- 旋转模式
+        canvasR2:onTap(nil, { pos = { x = 100, y = 350 } }) -- rotate mode
         canvasR2:onPan(nil, { pos = { x = 204, y = 404 }, start_pos = { x = 204, y = 404 } })
-        canvasR2:onPanRelease(nil, { pos = { x = 96, y = 404 } }) -- 旋转 90° → poly
+        canvasR2:onPanRelease(nil, { pos = { x = 96, y = 404 } }) -- rotate 90° -> poly
         check(poly2.kind == "poly", "rect rotated to poly")
-        canvasR2:onTap(nil, { pos = { x = 200, y = 300 } }) -- 旋转后角点 (100,300)→(200,300),再点选切回缩放
+        canvasR2:onTap(nil, { pos = { x = 200, y = 300 } }) -- after rotation corner (100,300)->(200,300), tap again to switch back to scale
         check(canvasR2._handle_mode == "scale", "poly toggles back to scale")
         local function pdiag(p)
             local p1, p3 = p.points[1], p.points[3]
@@ -1168,25 +1168,25 @@ do
         end
         local diag0 = pdiag(poly2)
         local fc2 = canvasR2:_frameCorners(poly2)
-        local s2x, s2y = fc2[3].x, fc2[3].y -- se 角
+        local s2x, s2y = fc2[3].x, fc2[3].y -- se corner
         local ccx, ccy = (poly2.points[1].x + poly2.points[3].x) / 2, (poly2.points[1].y + poly2.points[3].y) / 2
         canvasR2:onPan(nil, { pos = { x = s2x, y = s2y }, start_pos = { x = s2x, y = s2y } })
         canvasR2:onPanRelease(nil, { pos = { x = ccx + (s2x - ccx) * 1.5, y = ccy + (s2y - ccy) * 1.5 } })
         check(pdiag(poly2) > diag0 * 1.15,
             "rotated poly grows when corner dragged outward: " .. diag0 .. " -> " .. pdiag(poly2))
 
-        -- 旋转椭圆缩放:同样可向外拉大
+        -- Rotated ellipse scaling: can also be enlarged outwards
         local canvasE2 = newCanvas()
         canvasE2:_setTool("circle")
         canvasE2:onSwipe(nil, { pos = { x = 200, y = 300 }, end_pos = { x = 300, y = 300 } })
         local circE = canvasE2.elements[1]
         canvasE2:_setTool("select")
         canvasE2:onTap(nil, { pos = { x = 300, y = 300 } })
-        canvasE2:onTap(nil, { pos = { x = 300, y = 300 } }) -- 旋转模式
+        canvasE2:onTap(nil, { pos = { x = 300, y = 300 } }) -- rotate mode
         canvasE2:onPan(nil, { pos = { x = 304, y = 404 }, start_pos = { x = 304, y = 404 } })
-        canvasE2:onPanRelease(nil, { pos = { x = 96, y = 404 } }) -- 旋转 90°
+        canvasE2:onPanRelease(nil, { pos = { x = 96, y = 404 } }) -- rotate 90°
         check(math.abs((circE.rot or 0) - math.pi / 2) < 0.05, "ellipse rotated 90")
-        canvasE2:onTap(nil, { pos = { x = 300, y = 300 } }) -- 再点选切回缩放(圆旋转 90° 右缘仍在 300,300)
+        canvasE2:onTap(nil, { pos = { x = 300, y = 300 } }) -- tap again to switch back to scale (after a 90° rotation the circle's right edge is still at 300,300)
         check(canvasE2._handle_mode == "scale", "ellipse toggles back to scale")
         local rx0 = circE.rx
         local fcE = canvasE2:_frameCorners(circE)
@@ -1206,58 +1206,58 @@ do
     end
 end
 
--- ============ 13. 移动预览 / 选中对象灰度粗细 / 保存文件夹浏览器 ============
+-- ============ 13. Move preview / selected object grey & width / save folder browser ============
 do
     local ok, err = pcall(function()
-        -- 13a. 移动/复制拖拽:0.5s 停留落点预览(停止位置防抖,headless 手动触发定时器回调)
+        -- 13a. Move/copy drag: 0.5s rest drop-point preview (stop-position debounce, headless fires the timer callback manually)
         local canvas = newCanvas()
         canvas:_setTool("rect")
         canvas:onSwipe(nil, { pos = { x = 100, y = 300 }, end_pos = { x = 200, y = 400 } })
         local rect = canvas.elements[1]
         canvas:_setTool("select")
-        canvas:onTap(nil, { pos = { x = 100, y = 350 } }) -- 选中空心矩形
+        canvas:onTap(nil, { pos = { x = 100, y = 350 } }) -- select the hollow rectangle
         canvas:onPan(nil, { pos = { x = 120, y = 350 }, start_pos = { x = 100, y = 350 } })
         check(canvas._select_drag ~= nil, "drag should start move")
         check(canvas._drag_preview == nil, "no preview before dwell")
-        canvas:onPan(nil, { pos = { x = 120, y = 350 }, start_pos = { x = 100, y = 350 } }) -- 再 pan = 停留
+        canvas:onPan(nil, { pos = { x = 120, y = 350 }, start_pos = { x = 100, y = 350 } }) -- another pan = rest
         check(canvas._drag_preview_fn ~= nil, "dwell timer scheduled (stop debounce)")
-        canvas:_maybeShowDragPreview() -- 手动触发定时器回调(headless 无事件循环)
+        canvas:_maybeShowDragPreview() -- fire the timer callback manually (headless has no event loop)
         local pv = canvas._drag_preview
         check(pv ~= nil, "dwell should show move preview")
         local pb = pv._bbox
         check(pb.x0 == 120 and pb.y0 == 300 and pb.x1 == 220 and pb.y1 == 400,
             "preview at drag offset: " .. pb.x0 .. "," .. pb.y0 .. " " .. pb.x1 .. "," .. pb.y1)
-        canvas:onPan(nil, { pos = { x = 140, y = 350 }, start_pos = { x = 100, y = 350 } }) -- 又移动:预览跟随更新(不再擦除=无抖动)
+        canvas:onPan(nil, { pos = { x = 140, y = 350 }, start_pos = { x = 100, y = 350 } }) -- moved again: the preview follows (no longer erased = no flicker)
         local pv2 = canvas._drag_preview
         check(pv2 ~= nil, "preview follows finger (no clear)")
         check(pv2._bbox.x0 == 140 and pv2._bbox.y0 == 300 and pv2._bbox.x1 == 240 and pv2._bbox.y1 == 400,
             "preview updated to new offset")
         check(canvas._drag_preview_repaint_pending == true, "follow update schedules throttled repaint")
-        canvas:onPan(nil, { pos = { x = 140, y = 350 }, start_pos = { x = 100, y = 350 } }) -- 同位置:几何未变
+        canvas:onPan(nil, { pos = { x = 140, y = 350 }, start_pos = { x = 100, y = 350 } }) -- same position: geometry unchanged
         check(canvas._drag_preview == pv2, "no-op position keeps same preview instance (anti-flicker)")
         canvas:onPanRelease(nil, { pos = { x = 140, y = 350 } })
         check(rect.x0 == 140 and rect.y0 == 300 and rect.x1 == 240 and rect.y1 == 400,
             "rect moved to final pos: " .. rect.x0 .. "," .. rect.y0)
         check(canvas._drag_preview == nil, "preview cleared on release")
 
-        -- 13a2. 旋转模式拖锚点:0.5s 停留显示旋转后预览(与 _finishTransform 同数学)
+        -- 13a2. Dragging an anchor in rotate mode: a 0.5s rest shows the rotated preview (same maths as _finishTransform)
         local canvas3 = newCanvas()
         canvas3:_setTool("rect")
         canvas3:onSwipe(nil, { pos = { x = 100, y = 300 }, end_pos = { x = 200, y = 400 } })
         canvas3:_setTool("select")
         canvas3:onTap(nil, { pos = { x = 100, y = 350 } })
-        canvas3:onTap(nil, { pos = { x = 100, y = 350 } }) -- 再点选 → 旋转模式
+        canvas3:onTap(nil, { pos = { x = 100, y = 350 } }) -- tap again -> rotate mode
         check(canvas3._handle_mode == "rotate", "rotate mode for preview test")
-        canvas3:onPan(nil, { pos = { x = 204, y = 404 }, start_pos = { x = 204, y = 404 } }) -- 起笔命中 se 角
+        canvas3:onPan(nil, { pos = { x = 204, y = 404 }, start_pos = { x = 204, y = 404 } }) -- pen-down hits the se corner
         check(canvas3._transform ~= nil and canvas3._transform.handle == "se", "transform started")
-        canvas3:onPan(nil, { pos = { x = 96, y = 404 }, start_pos = { x = 204, y = 404 } }) -- 拖到 sw 角位置 = +90°
+        canvas3:onPan(nil, { pos = { x = 96, y = 404 }, start_pos = { x = 204, y = 404 } }) -- drag to the sw corner position = +90°
         check(canvas3._drag_preview_fn ~= nil, "rotate dwell timer scheduled")
-        canvas3:_maybeShowDragPreview() -- 手动触发停留回调
+        canvas3:_maybeShowDragPreview() -- fire the rest callback manually
         local rpv = canvas3._drag_preview
         check(rpv ~= nil, "rotate dwell should show preview")
         check(rpv.kind == "poly" and #rpv.points == 4, "rotate preview should be rotated poly")
         local found = false
-        for _, p in ipairs(rpv.points) do -- 角点 (100,300) 绕 (150,350) 转 90° → (200,300)
+        for _, p in ipairs(rpv.points) do -- corner (100,300) rotated 90° about (150,350) -> (200,300)
             if math.abs(p.x - 200) < 1 and math.abs(p.y - 300) < 1 then found = true end
         end
         check(found, "rotate preview corner at rotated position")
@@ -1266,17 +1266,17 @@ do
         local rpoly = canvas3.elements[1]
         check(rpoly.kind == "poly" and rpoly ~= rpv, "real rotation committed")
 
-        -- 13a3. 缩放模式拖锚点:停满后显示拉伸预览(与 _finishTransform 同数学)
+        -- 13a3. Dragging an anchor in scale mode: after the rest the stretch preview shows (same maths as _finishTransform)
         local canvas4 = newCanvas()
         canvas4:_setTool("rect")
         canvas4:onSwipe(nil, { pos = { x = 100, y = 300 }, end_pos = { x = 200, y = 400 } })
         local rect4 = canvas4.elements[1]
         canvas4:_setTool("select")
         canvas4:onTap(nil, { pos = { x = 100, y = 350 } })
-        canvas4:onPan(nil, { pos = { x = 204, y = 404 }, start_pos = { x = 204, y = 404 } }) -- 起笔命中 se 角
+        canvas4:onPan(nil, { pos = { x = 204, y = 404 }, start_pos = { x = 204, y = 404 } }) -- pen-down hits the se corner
         check(canvas4._transform ~= nil and canvas4._transform.handle == "se", "scale transform started")
         check(canvas4._handle_mode == "scale", "scale mode for preview test")
-        canvas4:onPan(nil, { pos = { x = 250, y = 450 }, start_pos = { x = 204, y = 404 } }) -- 拖到 (250,450)
+        canvas4:onPan(nil, { pos = { x = 250, y = 450 }, start_pos = { x = 204, y = 404 } }) -- drag to (250,450)
         canvas4:_maybeShowDragPreview()
         local spv = canvas4._drag_preview
         check(spv ~= nil, "scale dwell should show preview")
@@ -1286,11 +1286,11 @@ do
         check(rect4.x1 == 250 and rect4.y1 == 450, "rect scaled to final")
         check(canvas4._drag_preview == nil, "scale preview cleared on release")
 
-        -- 13a4. v61s:文字移动预览真实渲染(旧版 paintTo 走 shapes.drawElement
-        -- 不识别 text = 画空气,用户看到"文字移动无预览")
+        -- 13a4. v61s: text move preview really renders (the old paintTo went through shapes.drawElement,
+        -- which doesn't recognise text = drew into thin air; the user saw "no preview when moving text")
         local canvasT = newCanvas()
         canvasT:_setTool("text")
-        canvasT:_commitText(150, 300, "测试文字")
+        canvasT:_commitText(150, 300, "Test text")
         canvasT:_setTool("select")
         canvasT:onTap(nil, { pos = { x = 160, y = 300 } })
         check(canvasT._selected ~= nil and canvasT._selected.kind == "text", "text selected")
@@ -1305,7 +1305,7 @@ do
             local tbb = BLB.new(canvasT.canvas_w, canvasT.canvas_h, BLB.TYPE_BB8)
             tbb:fill(BLB.COLOR_WHITE)
             canvasT:paintTo(tbb, 0, 0)
-            -- 预览落点区(原文字右侧以外,预览 bbox 右半段)必须有墨
+            -- The preview drop area (beyond the right of the original text, the right half of the preview bbox) must have ink
             local pb = tpv._bbox
             local ink = 0
             for x = math.floor((pb.x0 + pb.x1) / 2), math.floor(pb.x1), 2 do
@@ -1319,7 +1319,7 @@ do
         end
         canvasT:onPanRelease(nil, { pos = { x = 450, y = 420 } })
 
-        -- 13b. 选中对象灰度/粗细调节 + 撤销
+        -- 13b. Selected object grey/width adjustment + undo
         local canvas2 = newCanvas()
         canvas2:_setTool("brush")
         canvas2:onSwipe(nil, { pos = { x = 100, y = 300 }, end_pos = { x = 200, y = 300 } })
@@ -1332,18 +1332,18 @@ do
         canvas2:_applySelectedWidth(8)
         check(line.width == 8, "selected width applied")
         check(line._bbox.y0 == 292, "bbox recomputed after width, got " .. tostring(line._bbox.y0))
-        canvas2:_undo() -- 撤销粗细(宽度记录的 orig 快照含当时 gray=0.5)
+        canvas2:_undo() -- undo width (the orig snapshot of the width record contains gray=0.5 at that time)
         check(line.width == 4, "undo width restores")
-        canvas2:_undo() -- 撤销灰度
+        canvas2:_undo() -- undo grey
         check(math.abs(line.gray - 1.0) < 0.001, "undo gray restores")
-        -- 同值第二次不产生新记录
-        canvas2:onTap(nil, { pos = { x = 150, y = 300 } }) -- 重新选中(undo 清空选中)
+        -- The same value a second time produces no new record
+        canvas2:onTap(nil, { pos = { x = 150, y = 300 } }) -- reselect (undo cleared the selection)
         canvas2:_applySelectedGray(50)
         canvas2:_applySelectedGray(50)
         canvas2:_undo()
         check(math.abs(line.gray - 1.0) < 0.001, "duplicate same-value no extra undo")
 
-        -- 13d. 直线预览粗细固定:随机模式下起笔取一次,多次停留预览与提交都不变
+        -- 13d. Line preview width fixed: in random mode taken once at pen-down, unchanged across several rest previews and the commit
         local canvasL = newCanvas()
         canvasL:_setTool("line")
         canvasL.width_random = true
@@ -1354,7 +1354,7 @@ do
         canvasL:_maybeShowShapePreview()
         local pw = canvasL.preview and canvasL.preview.width
         check(pw ~= nil, "line preview should have fixed width")
-        canvasL:onPan(nil, { pos = { x = 160, y = 300 }, start_pos = { x = 100, y = 300 } }) -- 再停留
+        canvasL:onPan(nil, { pos = { x = 160, y = 300 }, start_pos = { x = 100, y = 300 } }) -- rest again
         canvasL:_scheduleShapePreview(160, 300)
         canvasL:_maybeShowShapePreview()
         check(canvasL.preview and canvasL.preview.width == pw,
@@ -1364,7 +1364,7 @@ do
         check(lineEl and lineEl.kind == "line" and lineEl.width == pw,
             "committed line width matches preview")
 
-        -- 13c. 保存文件夹浏览器:菜单含 主目录/选择此目录/上一级/子文件夹/已有 PNG 文件
+        -- 13c. Save folder browser: the menu contains Home/Use this folder/Up/subfolders/existing PNG files
         local UIManager = require("ui/uimanager")
         local lfs = require("libs/libkoreader-lfs")
         local DataStorage = require("datastorage")
@@ -1386,20 +1386,20 @@ do
             local has_commit, has_up, has_home, has_sub, has_file = false, false, false, false, false
             for _, row in ipairs(captures[1].buttons) do
                 for _, b in ipairs(row) do
-                    if b.text:find("选择此目录") then has_commit = true end
-                    if b.text:find("上一级") then has_up = true end
-                    if b.text == "主目录" then has_home = true end
-                    if b.text == "_test_browser/" then has_sub = true end -- 文件夹项带 "/" 后缀
+                    if b.text:find("Use this folder") then has_commit = true end
+                    if b.text:find("Up") then has_up = true end
+                    if b.text == "Home" then has_home = true end
+                    if b.text == "_test_browser/" then has_sub = true end -- folder items have a "/" suffix
                     if b.text == "_test_file.png" then has_file = true end
                 end
             end
-            check(has_commit, "folder browser should have 选择此目录")
-            check(has_up, "folder browser should have 上一级")
-            check(has_home, "folder browser should have 主目录")
+            check(has_commit, "folder browser should have Use this folder")
+            check(has_up, "folder browser should have Up")
+            check(has_home, "folder browser should have Home")
             check(has_sub, "folder browser should list subfolder")
             check(has_file, "folder browser should list existing png files")
         else
-            print("WARN: 文件夹浏览器未能 headless 构造,跳过断言")
+            print("WARN: folder browser could not be constructed headless, skipping assertions")
         end
         pcall(os.remove, fake_png)
         pcall(lfs.rmdir, sub)
@@ -1413,7 +1413,7 @@ do
     end
 end
 
--- ============ 14. 设置持久化(插件目录,退出保存/启动读取) ============
+-- ============ 14. Settings persistence (plugin directory, saved on exit/read on start) ============
 do
     local ok, err = pcall(function()
         local DrawingCanvas = require("drawingpad.drawing_canvas")
@@ -1429,13 +1429,13 @@ do
         c1.width = 9
         c1.font = "DroidSansFallback.ttf"
         c1.font_size = 42
-        c1._last_text = "上次的字"
-        -- 菜单/按钮状态(黑底白字的次要功能态):应保持默认(白底黑字),不被恢复
+        c1._last_text = "Last text"
+        -- Menu/button state (secondary-function state with inverted colours): should stay default (black on white), not restored
         c1.select_mode = "copy"
         c1.eraser_mode = "rect"
         c1.rect_filled = true
         c1.circle_filled = true
-        c1.save_folder = "/mnt/us/测试目录"
+        c1.save_folder = "/mnt/us/test_dir"
         c1.tip = "diamond"
         c1:_saveSettings()
         check(lfs.attributes(settings_path, "mode") ~= nil, "settings file should be written")
@@ -1444,8 +1444,8 @@ do
         check(c2.width == 9, "width restored")
         check(c2.font == "DroidSansFallback.ttf", "font restored, got " .. tostring(c2.font))
         check(c2.font_size == 42, "font_size restored, got " .. tostring(c2.font_size))
-        check(c2._last_text == "上次的字", "last_text restored, got " .. tostring(c2._last_text))
-        check(c2.save_folder == "/mnt/us/测试目录", "save_folder restored")
+        check(c2._last_text == "Last text", "last_text restored, got " .. tostring(c2._last_text))
+        check(c2.save_folder == "/mnt/us/test_dir", "save_folder restored")
         check(c2.tip == "diamond", "tip restored")
         check(c2.select_mode == "move", "menu state NOT restored: select_mode default move")
         check(c2.eraser_mode == "brush", "menu state NOT restored: eraser_mode default brush")
@@ -1463,10 +1463,10 @@ do
     end
 end
 
--- ============ 15. 填充工具(点填/描边填) ============
+-- ============ 15. Fill tool (tap fill/path fill) ============
 do
     local ok, err = pcall(function()
-        -- 点填:空心圆封闭区域单色填充
+        -- Tap fill: solid fill of the enclosed area of a hollow circle
         local canvas = newCanvas()
         canvas:_setTool("circle")
         canvas:onSwipe(nil, { pos = { x = 200, y = 300 }, end_pos = { x = 300, y = 300 } })
@@ -1475,20 +1475,20 @@ do
         check(a(200, 300) == 255, "before fill: circle interior white")
         canvas:_setTool("fill")
         check(canvas.fill_mode == "tap", "fill default tap mode")
-        canvas:onTap(nil, { pos = { x = 200, y = 300 } }) -- 点圆内部
+        canvas:onTap(nil, { pos = { x = 200, y = 300 } }) -- tap inside the circle
         check(#canvas.elements == 2 and canvas.elements[2].kind == "fill",
             "fill creates fill element, got " .. tostring(#canvas.elements))
         check(a(200, 300) == 0, "after fill: interior black, got " .. tostring(a(200, 300)))
         check(a(50, 300) == 255, "outside circle stays white, got " .. tostring(a(50, 300)))
-        -- fill 元素按 span 区域重放(区域重绘不丢)
+        -- The fill element replays per span region (region redraws don't lose it)
         canvas:_redrawRegion(canvas:_elementRegion(canvas.elements[2]))
         check(a(200, 300) == 0, "fill re-renders on region redraw")
-        -- 撤销恢复
+        -- Undo restores
         canvas:_undo()
         check(#canvas.elements == 1, "undo removes fill")
         check(a(200, 300) == 255, "undo restores interior white")
 
-        -- 描边填:画笔闭合路径(起点=落点)只留填充面,路径墨迹被清除(不显示路径)
+        -- Path fill: a closed brush path (start = end) leaves only the filled area, the path ink is cleared (path not shown)
         local canvas2 = newCanvas()
         canvas2:_setTool("fill")
         canvas2:_toggleFillMode()
@@ -1508,22 +1508,22 @@ do
         check(a2(150, 250) == 0, "closed path interior filled, got " .. tostring(a2(150, 250)))
         check(a2(99, 250) == 255, "path stroke cleared (not displayed), got " .. tostring(a2(99, 250)))
 
-        -- 浅色描边:边界必须被识别,填充不溢出(洪泛容差 20)
+        -- Light outline: the boundary must be recognised, the fill must not overflow (flood tolerance 20)
         local canvasL = newCanvas()
         canvasL:_setTool("circle")
         canvasL:onSwipe(nil, { pos = { x = 200, y = 300 }, end_pos = { x = 300, y = 300 } })
         local lcirc = canvasL.elements[1]
-        lcirc.gray = 0.1 -- 浅灰描边(像素值≈229,与白背景差 26 > 容差 20)
+        lcirc.gray = 0.1 -- light grey outline (pixel value ≈229, differs from the white background by 26 > tolerance 20)
         canvasL:_redrawRegion(canvasL:_elementRegion(lcirc))
         canvasL:_setTool("fill")
-        canvasL:onTap(nil, { pos = { x = 200, y = 300 } }) -- 点圆内部
+        canvasL:onTap(nil, { pos = { x = 200, y = 300 } }) -- tap inside the circle
         local bbL = canvasL.canvas_bb
         local function aL(x, y) return bbL:getPixel(x, y) and bbL:getPixel(x, y).a end
         check(aL(200, 300) == 0, "light-stroke circle interior filled, got " .. tostring(aL(200, 300)))
         check(aL(90, 300) == 255, "light-stroke boundary stops fill (no overflow), got " .. tostring(aL(90, 300)))
         check(aL(100, 300) > 200, "light stroke ink preserved, got " .. tostring(aL(100, 300)))
 
-        -- 5% 浅描边(灰 0.05,与白背景像素差 >8)也成边界,不溢出(边缘感知洪泛)
+        -- A 5% light outline (grey 0.05, pixel difference from white >8) is also a boundary, no overflow (edge-aware flood)
         local canvasL2 = newCanvas()
         canvasL2:_setTool("circle")
         canvasL2:onSwipe(nil, { pos = { x = 200, y = 300 }, end_pos = { x = 300, y = 300 } })
@@ -1537,10 +1537,10 @@ do
         check(aL2(200, 300) == 0, "5% stroke circle interior filled, got " .. tostring(aL2(200, 300)))
         check(aL2(90, 300) == 255, "5% stroke boundary stops fill (no overflow), got " .. tostring(aL2(90, 300)))
 
-        -- 干涉:描边填只按自身路径计算,不被其他笔画截断/污染
+        -- Interference: path fill is computed only from its own path, not cut off/polluted by other strokes
         local canvasI = newCanvas()
         canvasI:_setTool("brush")
-        canvasI:onSwipe(nil, { pos = { x = 100, y = 250 }, end_pos = { x = 300, y = 250 } }) -- 先画横线穿过区域
+        canvasI:onSwipe(nil, { pos = { x = 100, y = 250 }, end_pos = { x = 300, y = 250 } }) -- first draw a horizontal line across the area
         canvasI:_setTool("fill")
         canvasI:_toggleFillMode()
         canvasI:onPan(nil, { pos = { x = 100, y = 200 }, start_pos = { x = 100, y = 200 } })
@@ -1560,15 +1560,15 @@ do
         check(aI(250, 250) == 0, "crossing line outside square preserved, got " .. tostring(aI(250, 250)))
         check(aI(99, 220) == 255, "path boundary cleared (not displayed), got " .. tostring(aI(99, 220)))
 
-        -- 远距自动闭合:落点离起点很远也自动连接闭合填内部(不吸附末点,
-        -- 闭合段 = 落笔点→起点直线,填充区域 = 路径+闭合段围成的四边形)
+        -- Long-distance auto close: even when the end point is far from the start it closes and fills the interior (end point not snapped,
+        -- closing segment = straight line from pen-up point to start, filled area = quadrilateral enclosed by the path + closing segment)
         local canvas3 = newCanvas()
         canvas3:_setTool("fill")
         canvas3:_toggleFillMode()
         canvas3:onPan(nil, { pos = { x = 100, y = 200 }, start_pos = { x = 100, y = 200 } })
         canvas3:onPan(nil, { pos = { x = 200, y = 200 }, start_pos = { x = 100, y = 200 } })
         canvas3:onPan(nil, { pos = { x = 200, y = 300 }, start_pos = { x = 100, y = 200 } })
-        canvas3:onPan(nil, { pos = { x = 250, y = 250 }, start_pos = { x = 100, y = 200 } }) -- 落点远在右上方
+        canvas3:onPan(nil, { pos = { x = 250, y = 250 }, start_pos = { x = 100, y = 200 } }) -- end point far to the upper right
         canvas3:onPanRelease(nil, { pos = { x = 250, y = 250 } })
         check(canvas3.elements[1] and canvas3.elements[1].kind == "fill",
             "far endpoint auto-closes and fills, got "
@@ -1578,7 +1578,7 @@ do
         check(a3(210, 280) == 0, "auto-closed quadrilateral interior filled, got " .. tostring(a3(210, 280)))
         check(a3(120, 240) == 255, "outside auto-closed region stays white, got " .. tostring(a3(120, 240)))
 
-        -- 直线不产生填充,路径也不显示(2 点退化 → 什么都不留)
+        -- A straight line produces no fill, and the path isn't shown either (2-point degenerate -> nothing left)
         local canvas4 = newCanvas()
         canvas4:_setTool("fill")
         canvas4:_toggleFillMode()
@@ -1588,7 +1588,7 @@ do
         check(#canvas4.elements == 0,
             "straight line should leave nothing (no fill, no stroke), got " .. tostring(#canvas4.elements))
 
-        -- 描边填 = 单 fill 元素 + 一条撤销记录:一次撤销清空,重做恢复填充
+        -- Path fill = a single fill element + one undo record: one undo clears it, redo restores the fill
         local canvasU = newCanvas()
         canvasU:_setTool("fill")
         canvasU:_toggleFillMode()
@@ -1615,14 +1615,14 @@ do
             .. tostring(canvasU.elements[1] and canvasU.elements[1].kind))
         check(aU(150, 250) == 0, "redo re-fills interior, got " .. tostring(aU(150, 250)))
 
-        -- 描边填 快速收尾(进行中路径被 swipe 完成):也自动闭合填充、路径不显示
+        -- Path fill fast finish (the in-progress path is completed by a swipe): also closes and fills automatically, path not shown
         local canvasS = newCanvas()
         canvasS:_setTool("fill")
         canvasS:_toggleFillMode()
         canvasS:onPan(nil, { pos = { x = 100, y = 200 }, start_pos = { x = 100, y = 200 } })
         canvasS:onPan(nil, { pos = { x = 200, y = 200 }, start_pos = { x = 100, y = 200 } })
         canvasS:onPan(nil, { pos = { x = 200, y = 300 }, start_pos = { x = 100, y = 200 } })
-        canvasS:onSwipe(nil, { pos = { x = 200, y = 300 }, end_pos = { x = 100, y = 200 } }) -- 快速收尾闭合
+        canvasS:onSwipe(nil, { pos = { x = 200, y = 300 }, end_pos = { x = 100, y = 200 } }) -- fast finish closes
         check(#canvasS.elements == 1 and canvasS.elements[1].kind == "fill",
             "swipe-finished path should fill only (no stroke), got "
             .. tostring(#canvasS.elements) .. "/"
@@ -1632,13 +1632,13 @@ do
         check(aS(150, 250) == 0, "swipe-finished path interior filled, got " .. tostring(aS(150, 250)))
         check(aS(99, 250) == 255, "swipe-finished path stroke cleared, got " .. tostring(aS(99, 250)))
 
-        -- 点填:手势被分类成 pan / hold / swipe 时也要填充(防"偶发没反应")
+        -- Tap fill: must also fill when the gesture is classified as pan / hold / swipe (prevents "occasionally does nothing")
         local canvasT = newCanvas()
         canvasT:_setTool("circle")
         canvasT:onSwipe(nil, { pos = { x = 200, y = 300 }, end_pos = { x = 300, y = 300 } })
         canvasT:_setTool("fill")
         canvasT:onPan(nil, { pos = { x = 203, y = 300 }, start_pos = { x = 200, y = 300 } })
-        canvasT:onPanRelease(nil, { pos = { x = 203, y = 300 } }) -- tap 被分类成 pan
+        canvasT:onPanRelease(nil, { pos = { x = 203, y = 300 } }) -- tap classified as pan
         check(canvasT.elements[2] and canvasT.elements[2].kind == "fill",
             "pan-delivered tap should fill, got "
             .. tostring(canvasT.elements[2] and canvasT.elements[2].kind))
@@ -1651,7 +1651,7 @@ do
         canvasT2:onSwipe(nil, { pos = { x = 200, y = 300 }, end_pos = { x = 300, y = 300 } })
         canvasT2:_setTool("fill")
         canvasT2:onHold(nil, { pos = { x = 200, y = 300 } })
-        canvasT2:onHoldRelease(nil, { pos = { x = 200, y = 300 } }) -- tap 被分类成 hold
+        canvasT2:onHoldRelease(nil, { pos = { x = 200, y = 300 } }) -- tap classified as hold
         check(canvasT2.elements[2] and canvasT2.elements[2].kind == "fill",
             "hold-delivered tap should fill, got "
             .. tostring(canvasT2.elements[2] and canvasT2.elements[2].kind))
@@ -1659,12 +1659,12 @@ do
         canvasT3:_setTool("circle")
         canvasT3:onSwipe(nil, { pos = { x = 200, y = 300 }, end_pos = { x = 300, y = 300 } })
         canvasT3:_setTool("fill")
-        canvasT3:onSwipe(nil, { pos = { x = 195, y = 300 }, end_pos = { x = 205, y = 300 } }) -- 快速点按
+        canvasT3:onSwipe(nil, { pos = { x = 195, y = 300 }, end_pos = { x = 205, y = 300 } }) -- quick tap
         check(canvasT3.elements[2] and canvasT3.elements[2].kind == "fill",
             "swipe-delivered tap should fill, got "
             .. tostring(canvasT3.elements[2] and canvasT3.elements[2].kind))
 
-        -- 描边填 快速收尾且 swipe 终点滑出画布:也要立即闭合填充(不残留到下一次操作)
+        -- Path fill fast finish with the swipe end point leaving the canvas: must also close and fill immediately (nothing lingering until the next operation)
         local canvasO = newCanvas()
         canvasO:_setTool("fill")
         canvasO:_toggleFillMode()
@@ -1673,13 +1673,13 @@ do
         canvasO:onPan(nil, { pos = { x = 200, y = 400 }, start_pos = { x = 100, y = 300 } })
         canvasO:onPan(nil, { pos = { x = 100, y = 400 }, start_pos = { x = 100, y = 300 } })
         check(canvasO._stroke ~= nil, "stroke in progress before swipe-out")
-        canvasO:onSwipe(nil, { pos = { x = 100, y = 400 }, end_pos = { x = 100, y = 50 } }) -- 终点在 header(画布外)
+        canvasO:onSwipe(nil, { pos = { x = 100, y = 400 }, end_pos = { x = 100, y = 50 } }) -- end point in the header (outside the canvas)
         check(canvasO._stroke == nil and #canvasO.elements == 1 and canvasO.elements[1].kind == "fill",
             "swipe-out should commit fill immediately (no residual stroke), got stroke="
             .. tostring(canvasO._stroke ~= nil) .. " elements=" .. tostring(#canvasO.elements)
             .. " kind=" .. tostring(canvasO.elements[1] and canvasO.elements[1].kind))
 
-        -- 描边填 收尾被判定为 multiswipe(甩动轨迹有方向变化):也要立即收笔填充(注册 MultiSwipe)
+        -- Path fill finish classified as multiswipe (the flick changed direction): must also finish and fill immediately (MultiSwipe registered)
         local canvasM = newCanvas()
         canvasM:_setTool("fill")
         canvasM:_toggleFillMode()
@@ -1688,12 +1688,12 @@ do
         canvasM:onPan(nil, { pos = { x = 200, y = 400 }, start_pos = { x = 100, y = 300 } })
         canvasM:onPan(nil, { pos = { x = 100, y = 400 }, start_pos = { x = 100, y = 300 } })
         check(canvasM._stroke ~= nil, "stroke in progress before multiswipe")
-        canvasM:onMultiSwipe(nil, { pos = { x = 100, y = 400 }, end_pos = { x = 100, y = 50 } }) -- 终点甩到 header
+        canvasM:onMultiSwipe(nil, { pos = { x = 100, y = 400 }, end_pos = { x = 100, y = 50 } }) -- end point flicked into the header
         check(canvasM._stroke == nil and #canvasM.elements == 1 and canvasM.elements[1].kind == "fill",
             "multiswipe finish should commit fill immediately, got stroke="
             .. tostring(canvasM._stroke ~= nil) .. " elements=" .. tostring(#canvasM.elements)
             .. " kind=" .. tostring(canvasM.elements[1] and canvasM.elements[1].kind))
-        -- 画布确实注册了 MultiSwipe 手势(经 onGesture 派发到 onMultiSwipe)
+        -- The canvas really registered the MultiSwipe gesture (dispatched via onGesture to onMultiSwipe)
         check(canvasM.ges_events and canvasM.ges_events.MultiSwipe ~= nil,
             "canvas should register MultiSwipe gesture")
         print("fill tool: tap fill / path fill OK")
@@ -1706,12 +1706,12 @@ do
     end
 end
 
--- ============ 16. 文字选取框对齐(旋转/拉伸) + 滑条调节弹窗 ============
+-- ============ 16. Text selection box alignment (rotate/stretch) + slider adjustment popup ============
 do
     local ok, err = pcall(function()
         local Blitbuffer = require("ffi/blitbuffer")
         local Geom = require("ui/geometry")
-        -- 16a. 文字渲染墨迹与元素包围盒对齐(修复:旋转/拉伸后字体与选取框错位 0.8*字号)
+        -- 16a. Rendered text ink aligns with the element bounding box (fix: after rotate/stretch the glyphs and selection box were offset by 0.8*font size)
         local function makeTextCanvas(text, size)
             local c = newCanvas()
             local el = { kind = "text", x = 200, y = 400, text = text, font = c.font, size = size, gray = 1.0 }
@@ -1719,8 +1719,8 @@ do
             c:_cacheBBox(el)
             return c, el
         end
-        -- 渲染后扫描墨迹范围,断言:①墨迹在元素 bbox 内(修复前整体偏移会超出);
-        -- ②墨迹中心与 bbox 中心对齐(偏移检测,对字形/抗锯齿空隙鲁棒)
+        -- After rendering scan the ink extent and assert: (1) the ink is inside the element bbox (before the fix the whole thing shifted out);
+        -- (2) the ink centre aligns with the bbox centre (offset detection, robust to glyph/anti-aliasing gaps)
         local function inkInside(c, el)
             c:_cacheBBox(el)
             local b = el._bbox
@@ -1755,7 +1755,7 @@ do
                     minx, miny, maxx, maxy, b.x0, b.y0, b.x1, b.y1, cdx, cdy)
         end
 
-        local c1, el1 = makeTextCanvas("对齐测试", 32)
+        local c1, el1 = makeTextCanvas("Align test", 32)
         local ok1, msg1 = inkInside(c1, el1)
         check(ok1, "untransformed text ink inside/centered: " .. msg1)
         local sb1 = el1._bbox
@@ -1763,13 +1763,13 @@ do
         c1:_rotateElement(el1, math.pi / 2, cx1, cy1)
         local ok90, msg90 = inkInside(c1, el1)
         check(ok90, "rotated-90 text ink inside/centered: " .. msg90)
-        local c2, el2 = makeTextCanvas("斜着", 28)
+        local c2, el2 = makeTextCanvas("Tilted", 28)
         local sb2 = el2._bbox
         local cx2, cy2 = (sb2.x0 + sb2.x1) / 2, (sb2.y0 + sb2.y1) / 2
         c2:_rotateElement(el2, math.pi / 4, cx2, cy2)
         local ok45, msg45 = inkInside(c2, el2)
         check(ok45, "rotated-45 text ink inside/centered: " .. msg45)
-        local c3, el3 = makeTextCanvas("拉伸", 24)
+        local c3, el3 = makeTextCanvas("Stretch", 24)
         local sb3 = el3._bbox
         c3:_scaleElement(el3, sb3, { x0 = sb3.x0, y0 = sb3.y0, x1 = sb3.x0 + (sb3.x1 - sb3.x0) * 2, y1 = sb3.y1 })
         local okstr, msgstr = inkInside(c3, el3)
@@ -1778,12 +1778,12 @@ do
 
         local UIManager = require("ui/uimanager")
 
-        -- 16b. 选中对象灰度:滑条弹窗结构 + 滑条点按换算 + 预设档位 + 关闭写撤销
+        -- 16b. Selected object grey: slider popup structure + slider tap conversion + preset steps + closing writes undo
         local canvas = newCanvas()
         canvas:_setTool("brush")
         canvas:onSwipe(nil, { pos = { x = 100, y = 300 }, end_pos = { x = 200, y = 300 } })
         local line = canvas.elements[1]
-        local undo0 = #canvas.undo -- 画线已写 1 条
+        local undo0 = #canvas.undo -- drawing the line already wrote 1 record
         canvas:_setTool("select")
         canvas:onTap(nil, { pos = { x = 150, y = 300 } })
         check(canvas._selected == line, "select line for value picker")
@@ -1793,7 +1793,7 @@ do
         pcall(function() canvas:_pickElementGray() end)
         UIManager.show = orig_show
         if captured and captured.name == "DrawingValuePicker" then
-            -- 真实 paint 验证(构造 OK 但 paint 崩会整机闪退,如 pbar_w 漏定义)
+            -- Real paint check (constructs OK but a paint crash would take the whole device down, e.g. a missing pbar_w definition)
             local Screen = require("device").screen
             local ok_paint = pcall(function() captured:paintTo(Screen.bb, 0, 0) end)
             check(ok_paint, "value picker should paint without error")
@@ -1808,8 +1808,8 @@ do
             end
             walk(captured)
             check(progress_ref ~= nil, "value picker should contain ProgressWidget slider")
-            -- 滑条点按定位:走真实事件链(Event:new 把 nil args 也打包占位,
-            -- handler 必须签名 (_, ges) 否则 ges=nil 崩)——中点 → 50%
+            -- Slider tap positioning: go through the real event chain (Event:new packs nil args as placeholders too,
+            -- handlers must have the signature (_, ges) otherwise ges=nil crashes) - midpoint -> 50%
             if progress_ref then
                 progress_ref.dimen = Geom:new{ x = 100, y = 200, w = 400, h = 10 }
                 local Event = require("ui/event")
@@ -1817,7 +1817,7 @@ do
                 check(math.abs(line.gray - 0.5) < 0.001,
                     "slider tap sets 50%, got " .. tostring(line.gray))
             end
-            -- 预设档位按最大值百分比:0(最小),12(1/8),25(2/8)...100(8/8)
+            -- Preset steps as percentages of the maximum: 0 (min), 12 (1/8), 25 (2/8)...100 (8/8)
             local preset_btn
             local preset_12
             local function findBtn(w)
@@ -1843,7 +1843,7 @@ do
                 check(math.abs(line.gray - 0.5) < 0.001,
                     "preset button applies gray, got " .. tostring(line.gray))
             end
-            -- 步进行 -10/-1/+1/+10 存在;点 +10 → gray 0.5→0.6
+            -- Step row -10/-1/+1/+10 exists; tap +10 -> gray 0.5->0.6
             local btn_p10, btn_m10
             local function findStep(w)
                 if not w then return end
@@ -1873,14 +1873,14 @@ do
                 check(math.abs(line.gray - 0.5) < 0.001,
                     "-10 step reverts, got " .. tostring(line.gray))
             end
-            -- 关闭 → 写一条撤销(画线 1 条 + 灰度 1 条)
+            -- Close -> writes one undo record (1 for the line + 1 for grey)
             captured:onCloseWidget()
             check(#canvas.undo == undo0 + 1, "value picker close writes one undo, got " .. tostring(#canvas.undo))
         else
-            print("WARN: 值调节弹窗未能 headless 构造,跳过结构断言")
+            print("WARN: value adjustment popup could not be constructed headless, skipping structure assertions")
         end
 
-        -- 16c. 选中对象粗细:预设档位 + 撤销
+        -- 16c. Selected object width: preset steps + undo
         local canvas2 = newCanvas()
         canvas2:_setTool("brush")
         canvas2:onSwipe(nil, { pos = { x = 100, y = 300 }, end_pos = { x = 200, y = 300 } })
@@ -1897,7 +1897,7 @@ do
             local Screen = require("device").screen
             local ok_paint2 = pcall(function() captured2:paintTo(Screen.bb, 0, 0) end)
             check(ok_paint2, "width picker should paint without error")
-            -- 粗细上限 800,档位按最大值百分比且无 px 后缀:1(最小),100(1/8),200(2/8)...
+            -- Width limit 800, steps as percentages of the maximum and no px suffix: 1 (min), 100 (1/8), 200 (2/8)...
             local btn100
             local btn800
             local function findBtn2(w)
@@ -1926,10 +1926,10 @@ do
             captured2:onCloseWidget()
             check(#canvas2.undo == undo2_0 + 1, "width picker close writes undo, got " .. tostring(#canvas2.undo))
         else
-            print("WARN: 粗细弹窗未能 headless 构造,跳过断言")
+            print("WARN: width popup could not be constructed headless, skipping assertions")
         end
 
-        -- 16d. 全局灰度设置的"固定" → 弹出滑条弹窗
+        -- 16d. "Fixed" in the global grey settings -> pops up the slider popup
         local canvas3 = newCanvas()
         local orig_show3 = UIManager.show
         local captures3 = {}
@@ -1954,14 +1954,14 @@ do
                     "fixed gray should open slider picker, got " .. tostring(captured4 and captured4.name))
             end
         else
-            print("WARN: 灰度菜单未能 headless 构造,跳过断言")
+            print("WARN: grey menu could not be constructed headless, skipping assertions")
         end
-        -- 16e. 粗细大时空心圆/矩形不被误丢(形状阈值与线宽解耦)
+        -- 16e. With a large width, hollow circles/rectangles aren't wrongly discarded (shape threshold decoupled from line width)
         local cw = newCanvas()
         cw:_setTool("circle")
         cw.width = 800
         cw:onPan(nil, { pos = { x = 300, y = 400 }, start_pos = { x = 300, y = 400 } })
-        cw:onPanRelease(nil, { pos = { x = 380, y = 400 } }) -- 半径 80
+        cw:onPanRelease(nil, { pos = { x = 380, y = 400 } }) -- radius 80
         check(#cw.elements == 1 and cw.elements[1].kind == "circle" and cw.elements[1].rx == 80,
             "thick-width hollow circle should commit (not dropped), got "
             .. tostring(#cw.elements) .. "/" .. tostring(cw.elements[1] and cw.elements[1].rx))
@@ -1972,34 +1972,34 @@ do
         cw2:onPanRelease(nil, { pos = { x = 300, y = 480 } }) -- 100x80
         check(#cw2.elements == 1 and cw2.elements[1].kind == "rect",
             "thick-width rect should commit (not dropped), got " .. tostring(#cw2.elements))
-        -- 粗细大时微小误触(半径 3)仍丢弃
+        -- With a large width a tiny accidental touch (radius 3) is still discarded
         local cw3 = newCanvas()
         cw3:_setTool("circle")
         cw3.width = 800
         cw3:onPan(nil, { pos = { x = 300, y = 400 }, start_pos = { x = 300, y = 400 } })
-        cw3:onPanRelease(nil, { pos = { x = 303, y = 400 } }) -- 半径 3 < 8
+        cw3:onPanRelease(nil, { pos = { x = 303, y = 400 } }) -- radius 3 < 8
         check(#cw3.elements == 0, "tiny thick-width circle still dropped as accidental, got "
             .. tostring(#cw3.elements))
         print("thick-width shapes: commit / drop OK")
 
-        -- 16f. 选中文字 → 点"文字"工具 → 属性修改(内容/字体/字号)
+        -- 16f. Selected text -> tap the "Text" tool -> property edit (content/font/size)
         local cEdit = newCanvas()
-        local tel = { kind = "text", x = 200, y = 400, text = "旧文字", font = cEdit.font, size = 24, gray = 1.0 }
+        local tel = { kind = "text", x = 200, y = 400, text = "Old text", font = cEdit.font, size = 24, gray = 1.0 }
         table.insert(cEdit.elements, tel)
         cEdit:_cacheBBox(tel)
         cEdit:_setTool("select")
         cEdit:onTap(nil, { pos = { x = 200, y = 400 } })
         check(cEdit._selected == tel, "select text element")
         local edit_undo0 = #cEdit.undo
-        -- 核心:更新文字元素(对话框 headless 构造不了,直接测方法)
-        cEdit:_updateTextElement(tel, "新文字")
-        check(tel.text == "新文字", "text content updated, got " .. tostring(tel.text))
+        -- Core: update the text element (the dialog can't be constructed headless, test the method directly)
+        cEdit:_updateTextElement(tel, "New text")
+        check(tel.text == "New text", "text content updated, got " .. tostring(tel.text))
         check(#cEdit.undo == edit_undo0 + 1, "text edit writes one undo, got "
             .. tostring(#cEdit.undo))
-        -- 无变化不写撤销
-        cEdit:_updateTextElement(tel, "新文字")
+        -- No change writes no undo
+        cEdit:_updateTextElement(tel, "New text")
         check(#cEdit.undo == edit_undo0 + 1, "no-change edit skips undo")
-        -- _setTool 入口:选中文字时点文字工具不切工具(弹窗 headless 跳过,断言不切工具)
+        -- _setTool entry: with text selected, tapping the text tool doesn't switch tools (popup skipped headless, assert the tool doesn't switch)
         local orig_showE = UIManager.show
         local capturedE
         UIManager.show = function(self, w) capturedE = w; return true end
@@ -2007,43 +2007,43 @@ do
         UIManager.show = orig_showE
         check(cEdit.tool == "select", "text tool click with text selected should not switch tool")
         if capturedE and capturedE.getInputText then
-            check(capturedE:getInputText() == "新文字", "edit dialog prefills content")
+            check(capturedE:getInputText() == "New text", "edit dialog prefills content")
         else
-            print("WARN: 文字编辑对话框未能 headless 构造,跳过弹窗断言")
+            print("WARN: text edit dialog could not be constructed headless, skipping popup assertions")
         end
 
-        -- 16g. 插入文字后记住上次内容与字体;再次插入自动填入
+        -- 16g. After inserting text remember the last content and font; the next insert prefills them
         local cAuto = newCanvas()
         cAuto:_setTool("text")
-        cAuto:_commitText(300, 400, "上次的字")
-        check(cAuto._last_text == "上次的字", "last text saved, got "
+        cAuto:_commitText(300, 400, "Last text")
+        check(cAuto._last_text == "Last text", "last text saved, got "
             .. tostring(cAuto._last_text))
         check(cAuto._last_font == cAuto.font and cAuto._last_font_size == cAuto.font_size,
             "last font/size saved")
-        -- 插入对话框预填上次内容(headless 构造不了 InputDialog,构造成功则断言)
+        -- The insert dialog prefills the last content (InputDialog can't be constructed headless; assert if construction succeeds)
         local orig_showA = UIManager.show
         local capturedA
         UIManager.show = function(self, w) capturedA = w; return true end
         pcall(function() cAuto:_showTextDialog(300, 400) end)
         UIManager.show = orig_showA
         if capturedA and capturedA.getInputText then
-            check(capturedA:getInputText() == "上次的字",
+            check(capturedA:getInputText() == "Last text",
                 "dialog prefills last text, got " .. tostring(capturedA:getInputText()))
         else
-            print("WARN: 文字插入对话框未能 headless 构造,跳过预填断言")
+            print("WARN: text insert dialog could not be constructed headless, skipping prefill assertion")
         end
         print("text edit dialog / last-input prefill OK")
 
-        -- 16h. 描边填:描边固定 1px(不受粗细设置影响)+ 贝塞尔平滑(含起笔/落笔点)
+        -- 16h. Path fill: outline fixed at 1px (ignores the width setting) + smoothing (including pen-down/pen-up points)
         local cW = newCanvas()
-        cW.width = 40 -- 粗细设大,描边仍应 1px
+        cW.width = 40 -- large width, the outline should still be 1px
         cW:_setTool("fill")
         cW:_toggleFillMode()
         cW:onPan(nil, { pos = { x = 100, y = 300 }, start_pos = { x = 100, y = 300 } })
         cW:onPan(nil, { pos = { x = 200, y = 300 }, start_pos = { x = 100, y = 300 } })
         check(cW._stroke ~= nil and cW._stroke.width == 1,
             "fill path stroke width fixed at 1, got " .. tostring(cW._stroke and cW._stroke.width))
-        -- hold 起笔同样 1px
+        -- hold pen-down is also 1px
         local cH = newCanvas()
         cH.width = 80
         cH:_setTool("fill")
@@ -2051,26 +2051,26 @@ do
         cH:onHold(nil, { pos = { x = 100, y = 300 } })
         check(cH._stroke ~= nil and cH._stroke.width == 1,
             "fill path hold stroke width fixed at 1, got " .. tostring(cH._stroke and cH._stroke.width))
-        -- _smoothClosedPath 单元:方形闭合 → 点数更多、首=末=起点、质心近中心
+        -- _smoothClosedPath unit: closed square -> more points, first = last = start, centroid near the centre
         local cS = newCanvas()
         local sq = {
             { x = 100, y = 100 }, { x = 200, y = 100 },
             { x = 200, y = 200 }, { x = 100, y = 200 },
-            { x = 100, y = 100 }, -- 闭合
+            { x = 100, y = 100 }, -- closing
         }
         local sm = cS:_smoothClosedPath(sq)
         check(#sm > #sq, "smooth should add points, got " .. tostring(#sm))
-        -- Chaikin 2 轮:方形 4 唯一点 → 每轮每段 2 点 → 16 + 闭合 1 = 17
+        -- Chaikin 2 rounds: square with 4 unique points -> 2 points per segment per round -> 16 + 1 closing = 17
         check(#sm == 4 * 2 * 2 + 1, "chaikin 2 rounds per corner, got " .. tostring(#sm))
-        -- 闭合:末点回到首点(Chaikin 切角不保留原顶点,首点=首段 3/4 点)
+        -- Closed: the last point returns to the first (Chaikin corner cutting doesn't keep original vertices, first point = 3/4 point of the first segment)
         local sf = sm[1]
         local sl = sm[#sm]
         check(sl.x == sf.x and sl.y == sf.y, "smooth closes (first==last)")
-        -- 未闭合序列(末≠首):平滑后自动闭合(末点回到首点)
+        -- Unclosed sequence (last ≠ first): automatically closed after smoothing (last point returns to the first)
         local open = {
             { x = 100, y = 100 }, { x = 200, y = 100 },
             { x = 200, y = 200 }, { x = 100, y = 200 },
-        } -- 方形三边+一角,未闭合
+        } -- three sides and a corner of a square, not closed
         local smo = cS:_smoothClosedPath(open)
         local sl2 = smo[#smo]
         check(sl2.x == smo[1].x and sl2.y == smo[1].y, "unclosed path auto-closes back to start")
@@ -2082,7 +2082,7 @@ do
         mx, my = mx / #sm, my / #sm
         check(math.abs(mx - 150) < 20 and math.abs(my - 150) < 20,
             "smooth centroid near square center, got " .. mx .. "," .. my)
-        -- 描边填整体回归:闭合路径(手抖锯齿) → fill 元素 spans 非空(平滑边界)
+        -- Path fill overall regression: closed path (shaky zigzag) -> fill element spans non-empty (smoothed boundary)
         local cF = newCanvas()
         cF:_setTool("fill")
         cF:_toggleFillMode()
@@ -2104,7 +2104,7 @@ do
         check(aF(150, 250) == 0, "smoothed fill interior black, got " .. tostring(aF(150, 250)))
         print("fill path: 1px stroke / bezier smoothing OK")
 
-        -- 16i. 底部布局:工具栏/状态栏在底部,顶部可画、底部遮挡区不可画
+        -- 16i. Bottom layout: toolbar/status bar at the bottom, the top is drawable, the bottom covered area isn't
         local cBot = newCanvas()
         check(cBot:_toCanvas(100, 50) ~= nil,
             "top area should be drawable (bottom toolbar layout)")
@@ -2112,14 +2112,14 @@ do
             "bottom toolbar area should not be drawable")
         check(cBot:_toCanvas(100, cBot.canvas_h - cBot.header_h - 5) ~= nil,
             "just above bottom header should be drawable")
-        -- 最小化后底部也可画(工具栏隐藏)
+        -- After minimising the bottom is drawable too (toolbar hidden)
         cBot:_setMinimized(true)
         check(cBot:_toCanvas(100, cBot.canvas_h - 1) ~= nil,
             "minimized bottom should be drawable")
         cBot:_setMinimized(false)
         check(cBot:_toCanvas(100, cBot.canvas_h - 1) == nil,
             "restored bottom not drawable again")
-        -- v59b 取消长按:面板条目只带单击;直线/画笔是独立条目,toolSet 直接切
+        -- v59b removed long-press: panel items only have tap; line/brush are separate items, toolSet switches directly
         local toolBt = cBot:_categoryBt("tool")
         check(toolBt.button_by_id["brush_btn"].hold_callback == nil
             and toolBt.button_by_id["line_btn"] ~= nil,
@@ -2130,7 +2130,7 @@ do
         check(cBot.tool == "brush", "brush_btn tap switches back")
         print("bottom layout / panel entries OK")
 
-        -- 16j. 填充结果支持选取:选中/移动/灰度/缩放/复制
+        -- 16j. Fill results support selection: select/move/grey/scale/copy
         local cF2 = newCanvas()
         cF2:_setTool("fill")
         cF2:_toggleFillMode()
@@ -2144,19 +2144,19 @@ do
         check(fillEl and fillEl.kind == "fill", "setup fill element")
         local fbb0 = fillEl._bbox
         cF2:_setTool("select")
-        cF2:onTap(nil, { pos = { x = 150, y = 350 } }) -- 点 fill 内部
+        cF2:onTap(nil, { pos = { x = 150, y = 350 } }) -- tap inside the fill
         check(cF2._selected == fillEl, "fill element selectable")
-        -- 移动(+30,+20)
+        -- Move (+30,+20)
         cF2:onPan(nil, { pos = { x = 150, y = 350 }, start_pos = { x = 150, y = 350 } })
         cF2:onPanRelease(nil, { pos = { x = 180, y = 370 } })
         local fb1 = fillEl._bbox
         check(fb1.x0 == fbb0.x0 + 30 and fb1.y0 == fbb0.y0 + 20,
             "fill moved, got " .. fb1.x0 .. "," .. fb1.y0)
-        -- 灰度
+        -- Grey
         cF2:_applySelectedGray(50)
         check(math.abs(fillEl.gray - 0.5) < 0.001, "fill gray changed, got "
             .. tostring(fillEl.gray))
-        -- 缩放:拖 se 角放大,bbox 变大且 spans 重栅格化
+        -- Scale: drag the se corner to enlarge, the bbox grows and spans are re-rasterised
         local fc = cF2:_frameCorners(fillEl)
         local se = fc[3]
         cF2:onPan(nil, { pos = { x = se.x, y = se.y }, start_pos = { x = se.x, y = se.y } })
@@ -2164,9 +2164,9 @@ do
         local fb2 = fillEl._bbox
         check(fb2.x1 > fb1.x1 + 40 and fb2.y1 > fb1.y1 + 20,
             "fill scaled bigger, got " .. fb1.x1 .. "->" .. fb2.x1 .. ", " .. fb1.y1 .. "->" .. fb2.y1)
-        -- 复制:独立副本(spans 深拷贝)
+        -- Copy: independent duplicate (spans deep-copied)
         cF2:_toggleSelectMode() -- copy
-        cF2:onTap(nil, { pos = { x = 180, y = 370 } }) -- 重新选中(缩放后仍在内部)
+        cF2:onTap(nil, { pos = { x = 180, y = 370 } }) -- reselect (still inside after scaling)
         check(cF2._selected == fillEl, "reselect fill after scale")
         cF2:onPan(nil, { pos = { x = 180, y = 370 }, start_pos = { x = 180, y = 370 } })
         cF2:onPanRelease(nil, { pos = { x = 120, y = 430 } })
@@ -2174,8 +2174,8 @@ do
         local fillCopy = cF2.elements[2]
         check(fillCopy ~= fillEl and fillCopy.kind == "fill", "copy is distinct fill")
         check(fillCopy.spans[1] ~= fillEl.spans[1], "copy spans deep-copied")
-        -- 拉大后的填充面必须稠密:逐行单点映射会在目标行间留空行 → 密集横纹;
-        -- 修复后按源行纵向半行带铺满目标行,行集连续(相邻行差 1)
+        -- The enlarged fill must be dense: per-row single-point mapping leaves empty rows between target rows -> dense horizontal stripes;
+        -- after the fix each source row's vertical half-row band covers the target rows, the row set is continuous (adjacent rows differ by 1)
         local ys = {}
         for _, sp in ipairs(fillEl.spans) do ys[sp[1]] = true end
         local ymin2, ymax2, nrows = math.huge, -math.huge, 0
@@ -2187,11 +2187,11 @@ do
         check(nrows > 0 and nrows == ymax2 - ymin2 + 1,
             "fill scaled-up spans dense (no horizontal stripes), rows=" .. nrows
             .. " range=" .. ymin2 .. "-" .. ymax2)
-        -- 旋转:复制前"再次点选"已切到 rotate 模式(上文 1914 行),拖 se 角绕包围盒中心旋转 30°
+        -- Rotate: the "tap again" before the copy already switched to rotate mode (line 1914 above), drag the se corner to rotate 30° about the bbox centre
         check(cF2._handle_mode == "rotate", "fill toggles to rotate mode")
         local rb = fillEl._bbox
         local rcx, rcy = (rb.x0 + rb.x1) / 2, (rb.y0 + rb.y1) / 2
-        local seA = { x = rb.x1 + 4, y = rb.y1 + 4 } -- se 锚点(_frameCorners pad=4)
+        local seA = { x = rb.x1 + 4, y = rb.y1 + 4 } -- se anchor (_frameCorners pad=4)
         local adx, ady = seA.x - rcx, seA.y - rcy
         local c30, s30 = math.cos(math.pi / 6), math.sin(math.pi / 6)
         cF2:onPan(nil, { pos = { x = seA.x, y = seA.y }, start_pos = { x = seA.x, y = seA.y } })
@@ -2202,7 +2202,7 @@ do
         check(rb2.x1 - rb2.x0 > 120 and rb2.y1 - rb2.y0 > 120,
             "fill rotated 30deg bbox grows, got " .. (rb2.x1 - rb2.x0)
             .. "x" .. (rb2.y1 - rb2.y0))
-        -- 旋转后行集仍稠密(逐 span 旋转重栅格化无横纹)
+        -- After rotation the row set is still dense (per-span rotation re-rasterisation, no stripes)
         local rys = {}
         for _, sp in ipairs(fillEl.spans) do rys[sp[1]] = true end
         local rmin, rmax, rn = math.huge, -math.huge, 0
@@ -2213,11 +2213,11 @@ do
         end
         check(rn > 0 and rn == rmax - rmin + 1,
             "fill rotated spans dense, rows=" .. rn .. " range=" .. rmin .. "-" .. rmax)
-        -- 旋转后仍可切换回缩放模式
+        -- After rotation it can still switch back to scale mode
         cF2:onTap(nil, { pos = { x = 180, y = 370 } })
         check(cF2._handle_mode == "scale", "fill toggles back to scale")
-        -- 旋转提交的刷新区域必须覆盖预览累积区:拖拽预览跟随期间中间位置的 fill 残影
-        -- 若未并入提交刷新,松手后残留多个角度的 fill 影 = 横纹(拉伸预览区域更大更明显)
+        -- The refresh region of the rotation commit must cover the accumulated preview area: fill ghosts at intermediate positions while the drag preview followed
+        -- if not merged into the commit refresh, several angles of fill ghost remain after release = stripes (bigger and more visible for stretch previews)
         do
             local UIManager = require("ui/uimanager")
             local seen = {}
@@ -2225,7 +2225,7 @@ do
             UIManager.setDirty = function(_, _, mode, region)
                 table.insert(seen, { mode = mode, region = region })
             end
-            -- 模拟预览跟随的中间位置:旋转 30° 再平移(残影区明显偏离提交区)
+            -- Simulate an intermediate position of the following preview: rotate 30° then translate (the ghost area clearly away from the commit area)
             local pv2 = cF2:_cloneElement(fillEl)
             local bb3 = fillEl._bbox
             local pcx, pcy = (bb3.x0 + bb3.x1) / 2, (bb3.y0 + bb3.y1) / 2
@@ -2235,7 +2235,7 @@ do
             cF2._drag_preview = pv2
             cF2._drag_preview_region = cF2:_elementRegion(pv2)
             local pvr = cF2._drag_preview_region
-            -- 拖角旋转提交(45°)
+            -- Drag a corner to rotate and commit (45°)
             cF2._handle_mode = "rotate"
             local fc3 = cF2:_frameCorners(fillEl)
             local se3 = fc3[3]
@@ -2258,9 +2258,9 @@ do
             end
             check(cov, "rotate submit refresh covers preview residue region")
         end
-        -- 旋转 fill 的窄行必须保持原始几何边界，不能被相邻行扩张成穿模横线。
-        -- (src_points 方案后旋转 spans 由顶点扫描线重算、天然致密无缝,窄行是真实
-        -- 几何尖端;渲染按 span 原样复写,不再做"邻行扩张"修补——扩张本身就是穿模)
+        -- Narrow rows of a rotated fill must keep their original geometric boundary and must not be expanded by neighbouring rows into poke-through lines.
+        -- (with src_points rotated spans are recomputed by a vertex scanline, naturally dense and seamless, narrow rows are real
+        -- geometric tips; rendering rewrites the spans as-is, no more "neighbour row expansion" patching - the expansion itself was the poke-through)
         do
             local Blitbuffer = require("ffi/blitbuffer")
             local shapes = require("drawingpad.shapes")

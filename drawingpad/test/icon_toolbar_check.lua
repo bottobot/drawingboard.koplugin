@@ -1,8 +1,8 @@
 --[[--
-底栏图标渲染自测:构造 DrawingCanvas,把 toolbar 区域真实 paint 到 PNG,人工核对 6 枚
-图标风格/大小一致(实心 vs 线框一眼可辨)。运行方式同 render_test.lua:
+Bottom-bar icon rendering self-check: construct a DrawingCanvas, really paint the toolbar area to a PNG, and manually verify that the 6
+icons are consistent in style/size (solid vs outline is obvious at a glance). Run the same way as render_test.lua:
     cd koreader-emulator-x86_64-linux-gnu-debug/koreader && ./luajit \
-      plugins/drawingboard.koplugin/drawingpad/test/icon_toolbar_check.lua <输出.png>
+      plugins/drawingboard.koplugin/drawingpad/test/icon_toolbar_check.lua <output.png>
 --]]
 
 local __t_src = debug.getinfo(1, "S").source
@@ -37,7 +37,7 @@ bb:writePNG(out)
 bb:free()
 print("toolbar PNG written:", out, W .. "x" .. H)
 
--- 核对插件自带图标(drawingpad/icons/*.svg)已装入用户 icons 目录且内容一致
+-- Verify the plugin's bundled icons (drawingpad/icons/*.svg) were installed into the user icons directory with identical content
 local function fileContent(p)
     local f = io.open(p, "r")
     if not f then return nil end
@@ -55,7 +55,7 @@ for name in require("libs/libkoreader-lfs").dir(src_dir) do
     end
 end
 
--- 恢复按钮(最小化态)也画一张 PNG 供目检
+-- Also paint the restore button (minimised state) to a PNG for visual inspection
 local rb = canvas.restore_btn
 assert(rb, "restore_btn missing")
 local rw = rb.dimen and rb.dimen.w or 90

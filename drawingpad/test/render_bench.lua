@@ -1,4 +1,4 @@
--- 基准:多图形画布 _renderAll/_toggleLayerVisible 耗时分解
+-- Benchmark: time breakdown of _renderAll/_toggleLayerVisible on a canvas with many shapes
 local __t_src = debug.getinfo(1, "S").source
 local __t_dir = __t_src:match("^@(.*)[/\\][^/\\]*$") or "."
 local __t_plugin = __t_dir:match("^(.*)[/\\]drawingpad[/\\]test$") or __t_dir
@@ -20,7 +20,7 @@ local canvas = DrawingCanvas:new{ on_close = function() end }
 local W, H = canvas.canvas_w, canvas.canvas_h
 print("screen:", W, H)
 
--- 构造:每层 30 条自由笔画(各 60 点折线)+ 2 个大填充 + 3 个图形 + 1 文字
+-- Setup: per layer 30 freehand strokes (60-point polylines each) + 2 large fills + 3 shapes + 1 text
 local function buildLayer(li, seed)
     canvas:_switchLayer(li)
     for s = 1, 30 do
@@ -52,7 +52,7 @@ local function buildLayer(li, seed)
         table.insert(canvas.elements, el)
         canvas:_cacheBBox(el)
     end
-    local tel = { kind = "text", x = 40, y = 60 + seed * 30, text = "测试文字 ABCD 123",
+    local tel = { kind = "text", x = 40, y = 60 + seed * 30, text = "Test text ABCD 123",
         font = canvas.font, size = 24, gray = 1.0 }
     table.insert(canvas.elements, tel)
     canvas:_cacheBBox(tel)
@@ -73,7 +73,7 @@ timeit("drawAllLayers only", function()
     canvas:_drawAllLayers()
 end, 3)
 
--- 分解:每层重放耗时
+-- Breakdown: replay time per layer
 for li = 1, 3 do
     timeit("replay layer " .. li, function()
         for _, el in ipairs(canvas.layers[li]) do
@@ -86,12 +86,12 @@ for li = 1, 3 do
     end, 3)
 end
 
--- blit 一次全屏的成本(对比)
+-- Cost of one full-screen blit (for comparison)
 local src = Blitbuffer.new(W, H, Blitbuffer.TYPE_BB8)
 timeit("full-screen blitFrom", function()
     canvas.canvas_bb:blitFrom(src, 0, 0, 0, 0, W, H)
 end, 10)
 
--- 显隐切换总耗时(含 setDirty)
+-- Total time of a visibility toggle (including setDirty)
 timeit("_toggleLayerVisible", function() canvas:_toggleLayerVisible() end, 3)
 canvas:onCloseWidget()

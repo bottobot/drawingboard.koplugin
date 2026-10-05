@@ -1,5 +1,5 @@
--- 半透明功能 真实 paint 冒烟(坑 14c):新弹窗真实 paintTo 不崩 + 落盘 PNG 供目检。
--- 运行:cd 模拟器目录 && ./luajit .../test/../dp_alpha_paint.lua(临时脚本,不入库)
+-- Opacity feature real-paint smoke test (pitfall 14c): new popups really paintTo without crashing + PNGs written to disk for visual inspection.
+-- Run: cd to the emulator directory && ./luajit .../test/../dp_alpha_paint.lua (temporary script, not committed)
 local __t_src = debug.getinfo(1, "S").source
 local __t_dir = __t_src:match("^@(.*)[/\\][^/\\]*$") or "."
 local __t_plugin = __t_dir:match("^(.*)[/\\]drawingpad[/\\]test$") or __t_dir
@@ -23,8 +23,8 @@ local canvas = DrawingCanvas:new{ on_close = function() end }
 local outdir = "/home/m/dp_alpha_paint"
 pcall(lfs.mkdir, outdir)
 
--- stub UIManager.show 捕获弹窗(不进事件循环),随后真实 paintTo(屏幕 BB)。
--- 注意 show 是冒号调用(UIManager:show(w)),第一个参数是 UIManager 自身
+-- stub UIManager.show to capture popups (no event loop), then really paintTo (screen BB).
+-- Note show is a colon call (UIManager:show(w)), so the first argument is UIManager itself
 local captured = {}
 UIManager.show = function(ui, w)
     captured[#captured + 1] = w
@@ -42,7 +42,7 @@ local function paintTop(name)
     captured = {}
 end
 
--- 画布上先画点东西:黑墨线 + 50% 透明实心矩形盖上去(目检混合效果)
+-- Draw something on the canvas first: a black ink line + a 50% transparent filled rectangle on top (visual check of blending)
 canvas:_setTool("brush")
 canvas.alpha = 1.0
 canvas:onPan(nil, { pos = { x = 60, y = 200 }, start_pos = { x = 60, y = 200 } })
@@ -59,25 +59,25 @@ print("canvas paintTo", ok and "OK" or ("CRASH: " .. tostring(err)))
 canvas.canvas_bb:writePNG(outdir .. "/canvas_alpha.png")
 print("canvas_alpha.png", (lfs.attributes(outdir .. "/canvas_alpha.png", "size") or 0) .. " bytes")
 
--- 1. 属性面板(透明度 与 笔触 并排)
+-- 1. Property panel (opacity next to tip)
 canvas:_showCategoryMenu("prop")
 paintTop("prop_panel")
 
--- 2. 透明度设置弹窗(最浓/最淡/分级/固定)
+-- 2. Opacity settings popup (max/min/levels/fixed)
 canvas:_pickAlpha()
 paintTop("alpha_setting_dialog")
 
--- 3. 图层面板(含 当前层透明度 条目)
+-- 3. Layer panel (including the current layer opacity item)
 canvas:_showCategoryMenu("layer")
 paintTop("layer_panel")
 
--- 4. 当前层透明度滑条弹窗
+-- 4. Current layer opacity slider popup
 canvas:_pickLayerAlpha()
 paintTop("layer_alpha_picker")
 
--- 5. 选中对象透明度滑条
+-- 5. Selected object opacity slider
 canvas:_setTool("select")
-canvas:onTap(nil, { pos = { x = 270, y = 290 } }) -- 选中透明矩形
+canvas:onTap(nil, { pos = { x = 270, y = 290 } }) -- select the transparent rectangle
 print("selected", canvas._selected and canvas._selected.kind or "NONE")
 canvas:_pickAlpha()
 paintTop("element_alpha_picker")

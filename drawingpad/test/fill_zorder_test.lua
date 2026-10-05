@@ -1,7 +1,7 @@
 --[[--
-填充图层遮挡回归测试(v61w):
-中层大灰点填 + 上层多个白路径填充,再画笔画触发区域重放——
-灰填不得越出重放区盖掉高层白填(旧 _redrawRegion 整元素无裁剪重画的 bug)。
+Fill layer occlusion regression test (v61w):
+a large grey tap fill on the middle layer + several white path fills on the top layer, then strokes that trigger a region replay -
+the grey fill must not overrun the replay region and cover the higher-layer white fills (the old _redrawRegion bug of redrawing whole elements without clipping).
 --]]
 
 local __t_src = debug.getinfo(1, "S").source
@@ -34,14 +34,14 @@ end
 local canvas = newCanvas()
 local function px(x, y) return canvas.canvas_bb:getPixel(x, y).a end
 
--- 中层(2):大面积灰色点填
+-- Middle layer (2): large grey tap fill
 canvas:_switchLayer(2)
 canvas:_setTool("fill")
 canvas.gray = 0.5
 canvas:onTap(nil, { pos = { x = 270, y = 300 } })
 check(canvas.layers[2][1] and canvas.layers[2][1].kind == "fill", "L2 tap fill committed")
 
--- 上层(3):4 个白色路径填充
+-- Top layer (3): 4 white path fills
 canvas:_switchLayer(3)
 canvas:_setTool("fill")
 canvas:_toggleFillMode()
@@ -60,7 +60,7 @@ for _, s in ipairs(spots) do
 end
 check(#canvas.layers[3] == 4, "4 white fills committed on L3")
 
--- 上层再画两笔(每次提交触发 _commitRegionReplay 区域重放)
+-- Two more strokes on the top layer (each commit triggers a _commitRegionReplay region replay)
 canvas:_setTool("brush")
 canvas.gray = 1.0
 canvas.width = 4
@@ -71,12 +71,12 @@ canvas:onPan(nil, { pos = { x = 300, y = 400 }, start_pos = { x = 300, y = 400 }
 canvas:onPan(nil, { pos = { x = 320, y = 402 }, start_pos = { x = 300, y = 400 } })
 canvas:onPanRelease(nil, { pos = { x = 340, y = 405 } })
 
--- 白填区内部保持白(255);笔画交叉处黑(0)
+-- Inside the white fills stays white (255); stroke crossings are black (0)
 check(px(280, 300) == 255, "white fill 2 interior stays white, got " .. px(280, 300))
 check(px(215, 385) == 255, "white fill 3 interior stays white, got " .. px(215, 385))
 check(px(340, 420) == 255, "white fill 4 interior stays white, got " .. px(340, 420))
 check(px(210, 292) < 60, "stroke ink visible on top")
--- 与全量重放一致性
+-- Consistency with a full replay
 canvas:_renderAll()
 check(px(280, 300) == 255 and px(215, 385) == 255, "matches full replay after _renderAll")
 canvas:onCloseWidget()

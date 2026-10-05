@@ -1,9 +1,9 @@
 --[[--
-图层遮挡回归测试:低层(1)提交新墨迹(笔画/墨点/图形/文字)后,
-高层(3)已有墨迹必须仍盖住它(像素=高层灰度);修复前低层新墨迹
-直接画进 canvas_bb 恒在最上,会错误压住高层。
+Layer occlusion regression test: after a lower layer (1) commits new ink (stroke/ink dot/shape/text),
+existing ink on a higher layer (3) must still cover it (pixel = higher-layer grey); before the fix the lower layer's new ink
+was drawn straight into canvas_bb, always on top, wrongly covering the higher layer.
 
-运行:
+Run:
     cd koreader-emulator-x86_64-linux-gnu-debug/koreader && ./luajit \
       /home/m/koreader/plugins/drawingboard.koplugin/drawingpad/test/layer_zorder_test.lua
 --]]
@@ -39,7 +39,7 @@ local function px(canvas, x, y)
     return canvas.canvas_bb:getPixel(x, y).a
 end
 
--- 断言矩形区域内全部像素接近期望灰度(容差)
+-- Assert that every pixel in the rectangle is close to the expected grey (with tolerance)
 local function bandIs(canvas, x0, y0, x1, y1, want, tol, msg)
     for y = y0, y1 do
         for x = x0, x1 do
@@ -51,13 +51,13 @@ local function bandIs(canvas, x0, y0, x1, y1, want, tol, msg)
     end
 end
 
--- ============ 1. 笔画:高层(3)黑横线,低层(1)灰竖线穿越 → 交点仍是黑 ============
+-- ============ 1. Stroke: black horizontal line on the high layer (3), grey vertical line on the low layer (1) crossing it -> the crossing stays black ============
 do
     local canvas = newCanvas()
     canvas:_setTool("brush")
     canvas.width = 10
 
-    -- 高层画黑横线:x 100..200 @ y=200,宽 10
+    -- Black horizontal line on the high layer: x 100..200 @ y=200, width 10
     canvas:_switchLayer(3)
     canvas:onPan(nil, { pos = { x = 100, y = 200 }, start_pos = { x = 100, y = 200 } })
     canvas:onPan(nil, { pos = { x = 150, y = 200 }, start_pos = { x = 100, y = 200 } })
@@ -65,7 +65,7 @@ do
     check(#canvas.layers[3] == 1, "layer3 has 1 stroke")
     check(px(canvas, 150, 200) < 20, "top stroke ink black before conflict")
 
-    -- 切低层画灰竖线:x=150, y 150..250,宽 10,灰 0.5
+    -- Switch to the low layer and draw a grey vertical line: x=150, y 150..250, width 10, grey 0.5
     canvas:_switchLayer(1)
     canvas.gray = 0.5
     canvas:onPan(nil, { pos = { x = 150, y = 150 }, start_pos = { x = 150, y = 150 } })
@@ -73,15 +73,15 @@ do
     canvas:onPanRelease(nil, { pos = { x = 150, y = 250 } })
     check(#canvas.layers[1] == 1, "layer1 has 1 stroke")
 
-    -- 交点区域必须仍是高层黑(修复前低层灰竖线画在最上 → a≈128)
+    -- The crossing must still be the high layer's black (before the fix the low-layer grey line was drawn on top -> a≈128)
     bandIs(canvas, 145, 197, 155, 203, 0, 40, "stroke crossing occluded by top layer")
-    -- 低层竖线在冲突区外的部分正常显示(灰 ≈128)
+    -- The parts of the low-layer vertical line outside the conflict area show normally (grey ≈128)
     check(math.abs(px(canvas, 150, 160) - 128) < 60, "lower stroke visible outside overlap")
     canvas:onCloseWidget()
     print("PASS: stroke commit respects layer order")
 end
 
--- ============ 2. 墨点:低层点在高层黑线上 → 保持黑 ============
+-- ============ 2. Ink dot: a low-layer dot on a high-layer black line -> stays black ============
 do
     local canvas = newCanvas()
     canvas:_setTool("brush")
@@ -100,10 +100,10 @@ do
     print("PASS: dot commit respects layer order")
 end
 
--- ============ 3. 图形:低层灰矩形边穿过高层黑竖线 → 交点仍是黑 ============
+-- ============ 3. Shape: a low-layer grey rectangle edge crossing a high-layer black vertical line -> the crossing stays black ============
 do
     local canvas = newCanvas()
-    -- 高层黑竖线 x=150, y 150..250
+    -- High-layer black vertical line x=150, y 150..250
     canvas:_setTool("brush")
     canvas.width = 10
     canvas:_switchLayer(3)
@@ -111,7 +111,7 @@ do
     canvas:onPan(nil, { pos = { x = 150, y = 200 }, start_pos = { x = 150, y = 150 } })
     canvas:onPanRelease(nil, { pos = { x = 150, y = 250 } })
 
-    -- 低层灰空心矩形 (120,180)-(180,220),宽 6:上边 y=180 穿过竖线
+    -- Low-layer grey outline rectangle (120,180)-(180,220), width 6: top edge y=180 crosses the vertical line
     canvas:_switchLayer(1)
     canvas:_setTool("rect")
     canvas.width = 10
@@ -120,13 +120,13 @@ do
     canvas:onPanRelease(nil, { pos = { x = 180, y = 220 } })
     check(#canvas.layers[1] == 1, "rect committed on layer1")
     check(px(canvas, 150, 180) < 20, "rect edge crossing stays occluded by top stroke")
-    -- 矩形边在无冲突处正常显示
+    -- Rectangle edges show normally where there is no conflict
     check(math.abs(px(canvas, 120, 200) - 128) < 70, "rect edge visible outside overlap")
     canvas:onCloseWidget()
     print("PASS: shape commit respects layer order")
 end
 
--- ============ 4. 文字:低层文字与高层黑带重叠 → 重叠带内不许出现文字灰 ============
+-- ============ 4. Text: low-layer text overlapping a high-layer black band -> no text grey inside the overlapping band ============
 do
     local canvas = newCanvas()
     canvas:_setTool("brush")
@@ -141,13 +141,13 @@ do
     canvas.gray = 0.5
     canvas:_commitText(110, 185, "WWWW")
     check(#canvas.layers[1] == 1, "text committed on layer1")
-    -- 高层黑线带 (x105..195, y197..203) 内不得被文字灰墨覆盖
+    -- Inside the high-layer black band (x105..195, y197..203) there must be no grey text ink
     bandIs(canvas, 105, 197, 195, 203, 0, 40, "text under top stroke band")
     canvas:onCloseWidget()
     print("PASS: text commit respects layer order")
 end
 
--- ============ 5. 最高层作画不受影响:层3 新笔画正常盖住层1 ============
+-- ============ 5. Drawing on the top layer is unaffected: a new layer-3 stroke covers layer 1 normally ============
 do
     local canvas = newCanvas()
     canvas:_switchLayer(1)

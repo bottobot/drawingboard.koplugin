@@ -1,6 +1,6 @@
 --[[--
-回归:灰度/粗细三级设置弹窗无"随机"按钮、无底部操作提示;随机仍由属性面板长按切换
-运行(从 KOReader 模拟器根目录):
+Regression: the grey/width three-level settings popups have no "Random" button and no bottom hint; random is still toggled by long-pressing the property panel item
+Run (from the KOReader emulator root):
     ./luajit plugins/drawingboard.koplugin/drawingpad/test/setting_dialog_test.lua
 --]]
 local __t_src = debug.getinfo(1, "S").source
@@ -37,13 +37,13 @@ local function newCanvas()
     return DrawingCanvas:new{ on_close = function() end }
 end
 
--- stub UIManager.show/close(捕获弹窗,不进事件循环)
+-- stub UIManager.show/close (capture popups, don't enter the event loop)
 local UIManager = require("ui/uimanager")
 local orig_show, orig_close = UIManager.show, UIManager.close
 UIManager.show = function(self_w, w) end
 UIManager.close = function(self_w, w, ...) end
 
--- 捕获 _showCenteredButtons 生成的 ButtonTable
+-- Capture the ButtonTable produced by _showCenteredButtons
 local function captureBt(c)
     local captured
     local orig = c._showCenteredButtons
@@ -65,7 +65,7 @@ local function dialogHasNoRandom(bt, label)
         end
     end
     check(not random_btn, label .. ": no random button in dialog")
-    -- button_by_id 只含有 id 的按钮:max/min/levels/fixed(关闭按钮无 id 不入表)
+    -- button_by_id only contains buttons with an id: max/min/levels/fixed (the close button has no id and isn't in the table)
     check(n == 4, label .. ": exactly 4 id'd buttons (max/min/levels/fixed), got " .. n)
 end
 
@@ -87,7 +87,7 @@ do
     pok = pcall(function() bt:paintTo(Screen.bb, 0, 0) end)
     check(pok, "width dialog paints without crash")
 
-    -- 随机模式仍由属性面板长按切换(状态机未被删除)
+    -- Random mode is still toggled by long-pressing the property panel item (state machine not removed)
     c:_toggleGrayRandom()
     check(c.gray_random == true, "gray random still toggleable via panel long-press")
     c:_toggleWidthRandom()
