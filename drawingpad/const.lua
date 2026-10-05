@@ -1,95 +1,95 @@
 --[[--
-drawingpad.const — 绘图板常量与纯工具函数(无 UI 依赖)。
-各功能模块 require 本文件取常量;pointSegDist 供墨迹距离计算。
+drawingpad.const - drawing board constants and pure utility functions (no UI dependencies).
+Feature modules require this file for constants; pointSegDist is used for ink distance calculations.
 --]]
 
--- 调试日志总开关:开发期置 true;发布置 false(零 IO 省电)
+-- Master switch for debug logging: true during development; false for release (zero IO, saves power)
 local LOG_ENABLED = false
 
--- 图形工具手指停留显示预览的延迟(秒)
+-- Delay (seconds) a finger must rest before shape tools show a preview
 local SHAPE_PREVIEW_DELAY = 0.12
 
--- 选择工具 移动/复制/旋转 拖拽:手指停留满该延迟后,在当前位置显示落点/变形预览
--- (停止位置防抖;0.2s 保证反馈跟手,仍能滤掉连续拖动;v61r 文字对象同样统一 0.2s)
+-- Select tool move/copy/rotate drag: once the finger rests for this delay, show the drop/transform preview at the current position
+-- (debounces the stop position; 0.2s keeps feedback responsive while still filtering continuous drags; since v61r text objects also use 0.2s)
 local MOVE_PREVIEW_DELAY = 0.2
 
--- 拖拽预览跟随刷新节流间隔(px/秒):预览出现后每次 pan 更新预览元素,
--- 屏幕按窗口合并区域刷新(与笔画节流同量级,墨水屏波形有上限,防排队卡顿;
--- 收笔时立即补一次)。微动不重绘由 _updateDragPreview 的 bbox 去重保证
+-- Throttle interval (px/second) for drag-preview follow refreshes: once the preview appears, each pan updates the preview element,
+-- and the screen refreshes merged regions per window (same order as stroke throttling; e-ink waveforms have a rate limit, prevents queueing stutter;
+-- one extra refresh immediately on pen-up). Skipping redraws on tiny moves is guaranteed by _updateDragPreview's bbox dedup
 local DRAG_PREVIEW_REFRESH_INTERVAL = 0.06
 
--- 旋转预览重建节流角度(弧度):预览跟随期间手指每次移动都全量重栅格化选中对象
--- (fill 数百行 span 旋转一次数毫秒到数百毫秒),角度变化小于该阈值跳过重建,
--- 只更新落点位置——重栅格化频率降到 repaint 节流同量级,拖拽旋转不再卡断
+-- Rotation preview rebuild throttle angle (radians): while the preview follows, every finger move fully re-rasterises the selected object
+-- (rotating a fill of hundreds of span rows takes milliseconds to hundreds of milliseconds); angle changes below this threshold skip the rebuild
+-- and only update the drop position - re-rasterisation frequency drops to the same order as the repaint throttle, so drag-rotate no longer stutters
 local DRAG_ROTATE_RECALC_ANGLE = 0.03
 
--- 笔画刷新节流间隔(秒):墨水屏波形更新有上限,逐 pan 事件刷新会排队滞后(卡顿);
--- 窗口内只排一次重绘并合并刷新区域,收笔时立即补一次刷新
--- 粗笔画(线宽 ≥ THICK_WIDTH)刷新区域大、压力高,节流间隔再放宽以减少波形刷新次数
+-- Stroke refresh throttle interval (seconds): e-ink waveform updates are rate-limited, refreshing on every pan event queues up and lags (stutter);
+-- only one redraw is queued per window with merged refresh regions, plus one refresh immediately on pen-up
+-- Thick strokes (line width ≥ THICK_WIDTH) have large refresh regions and high load, so the throttle interval is relaxed further to cut waveform refreshes
 local STROKE_REFRESH_INTERVAL = 0.06
 local THICK_WIDTH = 32
 local THICK_REFRESH_INTERVAL = 0.1
 
--- 橡皮点选容差(px):点击点离最近墨迹超过该距离视为点空白,不删除
+-- Eraser tap tolerance (px): a tap farther than this from the nearest ink counts as tapping blank space, nothing is deleted
 local PICK_TOLERANCE = 20
 
--- 填充工具:洪泛填充颜色容差(0-255 像素值差)。容差必须足够小,浅色描边
--- (灰 ≥0.08,像素值 ≤229)与白背景差 >20 才能被识别为边界,否则填充穿透浅色描边溢出
+-- Fill tool: flood-fill colour tolerance (0-255 pixel value difference). The tolerance must be small enough that light strokes
+-- (grey ≥0.08, pixel value ≤229) differing from the white background by >20 are recognised as boundaries, otherwise the fill leaks through light strokes
 local FILL_TOLERANCE = 20
--- 填充边缘检测容差:展开到相邻像素时,两像素局部差值 > 该值即视为边界。
--- 与"与种子色差值"无关——浅色描边(灰 5%~9%,像素值 232~242)与白背景差 >8
--- 即成边界,彻底摆脱固定容差漏掉更浅描边的天花板
+-- Fill edge-detection tolerance: when expanding to a neighbouring pixel, a local difference > this value between the two pixels counts as a boundary.
+-- Independent of the "difference from seed colour" - light strokes (grey 5%~9%, pixel value 232~242) differ from the white background by >8
+-- and become boundaries, fully removing the ceiling where a fixed tolerance missed even lighter strokes
 local FILL_EDGE_TOLERANCE = 8
 
--- 变形锚点:命中半径(px)。锚点视觉小巧(缩放方块 12px / 旋转圆点 10px)不遮挡画面,
--- 命中半径 48 远大于视觉,便于手指准确点中;再次点选选中对象在 四角缩放/四角旋转 间切换
+-- Transform handles: hit radius (px). Handles look small (scale square 12px / rotate dot 10px) so they don't obscure the picture;
+-- a hit radius of 48 is much larger than the visual, making them easy to hit with a finger; tapping the selected object again toggles between corner scale/corner rotate
 local HANDLE_HIT_RADIUS = 48
 
--- 文字锚点命中半径(px):文字选取框小、更难点中,命中范围更大
+-- Text handle hit radius (px): text selection boxes are small and harder to hit, so the hit range is larger
 local TEXT_HANDLE_HIT_RADIUS = 64
 
--- 起笔死区调优(v56):KOReader 手势检测在按下后要移够 PAN_THRESHOLD(scaleByDPI(35),
--- PW3 约 44px / 模拟器约 33px)才发第一个 pan 事件——起笔段的弧线信息在死区内
--- 从源头丢失(插件收不到任何中间点),这是"起笔不能画曲线"的主因。
--- 画板打开期间把手势检测实例的 PAN_THRESHOLD 动态调低到 scaleByDPI(该值),
--- 关闭时还原:不改 KOReader 源码,不影响画板以外的手势行为。
--- 值越小起笔越跟手;过小(<8)会让点按的轻微漂移误判成 pan(轻触变拖动)
+-- Pen-down dead zone tuning (v56): KOReader's gesture detector requires moving PAN_THRESHOLD (scaleByDPI(35),
+-- about 44px on PW3 / about 33px in the emulator) after touch-down before sending the first pan event - arc information at the start of the stroke
+-- is lost at the source inside the dead zone (the plugin receives no intermediate points); this is the main cause of "can't start a stroke with a curve".
+-- While the board is open, the gesture detector instance's PAN_THRESHOLD is dynamically lowered to scaleByDPI(this value),
+-- and restored on close: KOReader source is untouched, gesture behaviour outside the board is unaffected.
+-- Smaller values make pen-down more responsive; too small (<8) makes slight drift during a tap register as a pan (tap becomes drag)
 local GESTURE_PAN_THRESHOLD_DP = 10
 
--- 起笔停留延迟调优(v56b):画板期间把手势检测的 hold 定时间隔按比例缩短。
--- KOReader 默认 HOLD_INTERVAL_MS=500:手不动满该时长才发 hold(起笔停留此时才出
--- 圆点、之后 hold_pan 才跟手),慢起笔要白等这段。缩到 300ms 慢起笔更早出墨。
--- 用比例缩放(新值/500)实现,不依赖 time 模块与单位,用户自设的间隔同比例缩短。
--- 副作用:工具栏长按切换变灵敏——落笔到抬笔慢于该间隔的点按会被判成长按,
--- 触发次要功能(切到 [重做]/[清空] 等模式);若常误触,调回 350~400
+-- Pen-down hold delay tuning (v56b): while the board is open, scale down the gesture detector's hold timer interval proportionally.
+-- KOReader default HOLD_INTERVAL_MS=500: hold fires only after the finger stays still that long (only then does a resting pen-down show
+-- a dot, and hold_pan follows the finger afterwards); slow pen-downs have to wait it out. Cutting it to 300ms makes slow pen-downs ink sooner.
+-- Implemented as a ratio (new value/500), independent of the time module and units; a user-set interval shrinks by the same ratio.
+-- Side effect: toolbar long-press toggles become more sensitive - taps slower than this interval from down to up are treated as long-presses,
+-- triggering secondary functions (switching to [Redo]/[Clear] modes etc.); if mis-triggers are frequent, set it back to 350~400
 local GESTURE_HOLD_INTERVAL_MS = 300
 
--- 起笔防抖拆成两个阶段(v56,起笔曲线优化):
--- ① STROKE_EARLY_TRIGGER_DIST:按下后移动超过该距离就正式起笔(转进行中笔画)。
--- 值越小起笔越早,起笔处的小圆弧越早进入 Catmull-Rom 渲染而保留曲率;
--- 设 0 = 第一个 pan 点到达即起笔(跟手最紧,但快速轻触会起一笔)。
--- ② STROKE_DEBOUNCE_DIST:微轨迹起记阈值(px)。阈值内的微小移动也记入微轨迹,
--- 起笔时作为完整起始路径渲染;防抖期松手且有微轨迹时按完整弧提交短笔画。
--- 两者分离:微轨迹早记(保住弧线信息),起笔按独立阈值触发(兼顾起笔抖动)
+-- Pen-down debounce is split into two stages (v56, pen-down curve optimisation):
+-- ① STROKE_EARLY_TRIGGER_DIST: once moved beyond this distance after touch-down, the stroke formally starts (becomes an in-progress stroke).
+-- Smaller values start earlier, so small arcs at the start enter Catmull-Rom rendering sooner and keep their curvature;
+-- 0 = start as soon as the first pan point arrives (most responsive, but a quick light tap starts a stroke).
+-- ② STROKE_DEBOUNCE_DIST: micro-trace recording threshold (px). Tiny moves within the threshold are still recorded in the micro-trace,
+-- and rendered as the complete starting path when the stroke starts; releasing during debounce with a micro-trace commits a short stroke along the full arc.
+-- The two are separate: the micro-trace records early (keeps arc information), the stroke start triggers on its own threshold (tolerates pen-down jitter)
 local STROKE_EARLY_TRIGGER_DIST = 1
 local STROKE_DEBOUNCE_DIST = 1
 
--- 防抖:形状落笔最小尺寸(px)。直线长度/矩形最大边/圆半径小于该值视为误触丢弃
--- (随笔宽放大:粗笔误触的尺寸阈值更大)
+-- Debounce: minimum shape size (px). Line length/rectangle longest side/circle radius below this is treated as an accidental touch and discarded
+-- (scales with brush width: thick-brush accidental touches have a larger size threshold)
 local SHAPE_MIN_SIZE = 8
 
--- 撤销栈上限:超过后丢弃最旧记录,防止长时间绘画内存无限增长
+-- Undo stack limit: beyond it the oldest records are dropped, preventing unbounded memory growth in long drawing sessions
 local UNDO_LIMIT = 100
 
--- 单笔点数上限:超过后收笔时均匀抽稀(保首尾)。慢笔画/长时间连续画会产生大量
--- 1px 内的密集点,收敛后单笔内存与橡皮/保存的扫描成本都有限,长会话不再线性放大
+-- Per-stroke point limit: beyond it the stroke is evenly thinned on pen-up (keeping first and last). Slow strokes/long continuous drawing produce many
+-- dense points within 1px; after capping, per-stroke memory and eraser/save scan costs are bounded, so long sessions no longer scale linearly
 local MAX_STROKE_POINTS = 4096
 
--- 工具设置持久化键:退出时写入插件目录(drawingpad_settings.lua),下次打开自动读取。
--- 只持久化"绘画参数"类设置(灰度/粗细/笔触/字体/字号/保存目录):
--- 菜单/按钮状态类设置(实心/空心、橡皮模式、选择移动/复制、撤销/重做、刷新/清空)
--- 不持久化,每次启动恢复默认 = 工具栏白底黑字的主要功能态。
--- "last_text"(上次文字内容)字段带下划线,在 actions.lua 存取设置时单独处理
+-- Tool settings persistence keys: written to the plugin directory (drawingpad_settings.lua) on exit, read automatically on next open.
+-- Only "drawing parameter" settings are persisted (grey/width/brush tip/font/font size/save folder):
+-- menu/button state settings (filled/outline, eraser mode, select move/copy, undo/redo, refresh/clear)
+-- are not persisted; each launch restores defaults = the toolbar's primary-function state (black text on white).
+-- The "last_text" (last text content) field has an underscore and is handled separately when actions.lua loads/saves settings
 local SETTING_KEYS = {
     "gray", "gray_min", "gray_max", "gray_levels", "gray_random",
     "width", "width_min", "width_max", "width_levels", "width_random",
@@ -100,7 +100,7 @@ local SETTING_KEYS = {
     "menu_lang",
 }
 
--- v62n:界面名称表统一英文源(中文经 i18n dict 查表,与 plugin_manager 同套路)
+-- v62n: UI name tables use English as the single source (Chinese via i18n dict lookup, same approach as plugin_manager)
 local TOOL_NAMES = {
     brush = "Brush",
     eraser = "Eraser",
@@ -112,20 +112,20 @@ local TOOL_NAMES = {
     fill = "Fill",
 }
 
--- 图层数:v57 起从硬编码 3 改为常量,便于以后扩展(命名槽位/锁定等)。
--- 改 LAYER_COUNT 后还需确认 layers.lua 的 `((n-1) % 3) + 1` 取模公式与 drawing_canvas
--- 的 layers={} 初始化数组长度(本常量未直接用到此处,但下游可读为单一真理源)。
+-- Layer count: since v57 changed from hardcoded 3 to a constant, to ease future extension (named slots/locking etc.).
+-- After changing LAYER_COUNT, also check the `((n-1) % 3) + 1` modulo formula in layers.lua and the array length of drawing_canvas's
+-- layers={} initialisation (this constant isn't used directly there, but downstream can read it as the single source of truth).
 local LAYER_COUNT = 3
 
--- 插件版本与作者(关于弹窗;版本与 GitHub eznas/drawingboard.koplugin 保持一致或更高)
+-- Plugin version and author (About popup; version kept equal to or higher than GitHub eznas/drawingboard.koplugin)
 local PLUGIN_VERSION = "v63"
 local PLUGIN_AUTHOR = "eznas"
 
--- 图层命名:索引 1=下层(最先绘制,最底) 2=中层 3=上层(最后绘制,最顶);
--- 遮挡关系按命名:上层盖中层、中层盖下层
+-- Layer names: index 1=bottom layer (drawn first, lowest) 2=middle layer 3=top layer (drawn last, highest);
+-- occlusion follows the names: top covers middle, middle covers bottom
 local LAYER_NAMES = { [1] = "bottom", [2] = "middle", [3] = "top" }
 
--- 笔触形状(仅画笔/直线):内部名 → 状态栏缩写
+-- Brush tip shapes (brush/line only): internal name -> status bar abbreviation
 local TIP_NAMES = {
     circle = "O",
     square = "S",
@@ -135,7 +135,7 @@ local TIP_NAMES = {
     slash = "/",
     backslash = "\\",
 }
--- 笔触菜单条目(内部名,显示名)
+-- Brush tip menu items (internal name, display name)
 local TIPS = {
     { "circle", "Ellipse" },
     { "square", "Square" },
@@ -146,33 +146,33 @@ local TIPS = {
     { "backslash", "Backslash" },
 }
 
--- ============================ 界面统一常量(v59) ============================
+-- ============================ Unified UI constants (v59) ============================
 
--- UI 灰值三档(墨水屏灰阶统一,避免各处魔法数):
--- BAR = 状态栏底色;HIGHLIGHT = 画布选中框/变形锚点共用高亮灰;
--- 面板激活底色用 Blitbuffer.COLOR_LIGHT_GRAY(标准浅灰,不在此定义)
+-- Three UI grey levels (unified e-ink greyscale, avoiding magic numbers everywhere):
+-- BAR = status bar background; HIGHLIGHT = highlight grey shared by the canvas selection box/transform handles;
+-- the active panel background uses Blitbuffer.COLOR_LIGHT_GRAY (standard light grey, not defined here)
 local UI_GRAY_BAR = 0.5
 local UI_GRAY_HIGHLIGHT = 0.25
 
--- 弹窗宽度档(屏宽比例):窄 = 单列菜单(图层/笔触行),中 = 分类面板与双列设置弹窗,
--- 宽 = 滑条/文件夹浏览器/字体列表
+-- Popup width tiers (fraction of screen width): narrow = single-column menus (layer/brush tip rows), medium = category panels and two-column settings popups,
+-- wide = sliders/folder browser/font list
 local UI_WIDTH_NARROW = 0.3
 local UI_WIDTH_MEDIUM = 0.5
 local UI_WIDTH_WIDE = 0.85
 
--- 底栏一级入口图标(mdlight 图标库名,IconWidget 按名解析)。
--- v59b:取消长按后,刷新从功能面板提升为一级入口;
--- v59c:隐藏(最小化)移到最左,取消一级保存(功能面板已有);
--- v59d:退出并入功能面板,新增一级图层入口,功能固定最右
--- v59e:全套统一 mdlight 线框风(48 网格 stroke 1.8);v61i:自带图标改为
---   drawingpad/icons/ 下的资源文件(menus.lua 首运行装入用户 icons 目录),
---   mdlight 缺的(layers/上下箭头)与旧版设备构建缺的(appbar.menu/cre.render.reload)都在其中
--- 底栏/恢复按钮图标边长(scaleBySize 前的基准像素;40 偏大,34 约缩 15%)
+-- Bottom-bar top-level entry icons (mdlight icon set names, resolved by name by IconWidget).
+-- v59b: with long-press removed, refresh was promoted from the function panel to a top-level entry;
+-- v59c: hide (minimise) moved to the far left, top-level save removed (the function panel already has it);
+-- v59d: exit merged into the function panel, new top-level layer entry added, function panel fixed at far right
+-- v59e: whole set unified to mdlight outline style (48 grid, stroke 1.8); v61i: bundled icons changed to
+--   resource files under drawingpad/icons/ (menus.lua installs them into the user icons directory on first run),
+--   which include those missing from mdlight (layers/up-down arrows) and from older device builds (appbar.menu/cre.render.reload)
+-- Bottom-bar/restore button icon size (base pixels before scaleBySize; 40 was too big, 34 is about 15% smaller)
 local TOOLBAR_ICON_PX = 34
 
 local TOOLBAR_ICONS = {
     { id = "hide_btn",    icon = "dw.chevron.down" },
-    -- v61m:工具改用 dw.edit(自带 edit 缩小 10%,原满幅实心视觉偏大,不覆写全局 edit)
+    -- v61m: the tool uses dw.edit (the bundled edit scaled down 10%; the original full-bleed solid looked too big; global edit isn't overridden)
     { id = "cat_tool",    icon = "dw.edit" },
     { id = "cat_prop",    icon = "appbar.settings" },
     { id = "cat_layer",   icon = "layers" },
@@ -180,7 +180,7 @@ local TOOLBAR_ICONS = {
     { id = "cat_func",    icon = "appbar.menu" },
 }
 
--- 点到线段的最短距离
+-- Shortest distance from a point to a line segment
 local function pointSegDist(px, py, x0, y0, x1, y1)
     local dx, dy = x1 - x0, y1 - y0
     local len2 = dx * dx + dy * dy

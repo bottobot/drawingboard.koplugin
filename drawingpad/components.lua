@@ -1,24 +1,24 @@
 --[[--
-drawingpad.components — 弹窗组件库(Modal / Dialog / Toast 基础库)。
-业务层(menus/actions)不直接手写 InputContainer/FrameContainer 弹窗骨架,
-统一走本库:全屏 Modal 骨架 / 圆角可拖动 Dialog / 值调节弹窗 / Toast / 按钮即时响应。
+drawingpad.components - popup component library (Modal / Dialog / Toast base library).
+The business layer (menus/actions) doesn't hand-write InputContainer/FrameContainer popup skeletons;
+everything goes through this library: full-screen Modal skeleton / rounded draggable Dialog / value picker popup / Toast / instant-response buttons.
 
-关键约定(组件内部已固化,业务层不用再管):
-- 全屏 Modal 不设 covers_fullscreen:UIManager:_repaint 跳过被全屏控件盖住的画布,
-  滑块实时改灰度/粗细时选中对象不重绘,效果要等关闭才出现。
-- stop_events_propagation=true 时 onGesture 无条件消费所有手势,必须注册 ges_events,
-  否则弹窗把输入全吞掉(关不掉/点不动,曾因此锁死画板)。
-- KOReader 手势事件经 Event:new(name, args, ev) 派发,args 为 nil 也占位,
-  handler 必须签名 (_, ges),否则 ges 收到 nil 崩。
-- 刷新一律用延迟函数形式("ui"/"fast" + 区域),避免被全屏 partial 合并降级留残影。
-- 所有事件入口包 pcall(opts.log 记录),任何 Lua 错误只记日志不炸 KOReader。
+Key conventions (baked into the components, the business layer no longer has to care):
+- Full-screen Modals don't set covers_fullscreen: UIManager:_repaint skips a canvas covered by a full-screen widget,
+  so when a slider changes grey/width live the selected object wouldn't redraw until the popup closed.
+- With stop_events_propagation=true, onGesture unconditionally consumes all gestures, so ges_events must be registered,
+  otherwise the popup swallows all input (can't close/can't tap; this once locked up the board).
+- KOReader gesture events are dispatched via Event:new(name, args, ev); args takes a slot even when nil,
+  so handlers must have the signature (_, ges), otherwise ges receives nil and crashes.
+- Refreshes always use the deferred-function form ("ui"/"fast" + region), so they aren't merged into a full-screen partial and downgraded, leaving ghosting.
+- All event entry points are wrapped in pcall (logged via opts.log); any Lua error is only logged and never blows up KOReader.
 --]]
 
--- 自定位:把本文件所在目录加入 package.path,使 require("drawingpad.components") 与目录无关
+-- Self-locate: add this file's directory to package.path so require("drawingpad.components") works regardless of directory
 local __source = debug.getinfo(1, "S").source
 local __self_dir = __source:match("^@(.*)[/\\][^/\\]*$") or "."
 if not package.path:find(__self_dir, 1, true) then
-    -- 同目录短名(shapes/const)与父目录 drawingpad.* 前缀皆可解析,与 drawingpad 所在位置无关
+    -- Both same-directory short names (shapes/const) and the parent-directory drawingpad.* prefix resolve, regardless of where drawingpad lives
     package.path = __self_dir .. "/?.lua;" .. __self_dir .. "/../?.lua;" .. package.path
 end
 local const = require("drawingpad.const")
@@ -47,20 +47,20 @@ local _ = require("gettext")
 
 local M = {}
 
--- 日志:opts.log 可选;缺省静默
+-- Logging: opts.log is optional; silent by default
 local function log(opts, ...)
     if opts and opts.log then
         opts.log(...)
     end
 end
 
--- ============================ 工具 ============================
+-- ============================ Utilities ============================
 
--- 按钮即时响应:去掉 Button 默认 flash_ui 反色 + yieldToEPDC 阻塞
--- (真机每次点击约 200-300ms 冻结,配 EPD 刷新积压会显得"要点多次才有反应")。
--- 应用于弹窗内 ButtonTable / 对话框 button_table 的所有按钮。
--- 坑:ButtonTable.buttons 是原始按钮定义表(无 Button 方法),真正的 Button 实例
--- 在 buttons_layout(每行数组);button_by_id 只含带 id 的按钮,不完整。
+-- Instant button response: remove Button's default flash_ui inversion + yieldToEPDC blocking
+-- (on the real device each tap froze ~200-300ms, and with the EPD refresh backlog it felt like "you have to tap several times").
+-- Applied to all buttons in popup ButtonTables / dialog button_tables.
+-- Gotcha: ButtonTable.buttons is the raw button definition table (no Button methods); the real Button instances
+-- are in buttons_layout (array per row); button_by_id only holds buttons with an id, so it's incomplete.
 function M.instantButtons(bt)
     local rows = bt and (bt.buttons_layout or bt.buttons)
     if not rows then
@@ -82,12 +82,12 @@ function M.instantButtons(bt)
     end
 end
 
--- ============================ Modal 基类 ============================
+-- ============================ Modal base class ============================
 
--- 全屏模态弹窗基类:统一骨架/手势注册规范/点空白关闭/崩溃保护。
--- opts: { name, tap_close(默认 true), log }
--- 返回 popup(InputContainer 实例);业务层往 popup[1] 放内容。
--- 不在这里 show:由具体组件(Dialog/ValuePicker)负责。
+-- Full-screen modal popup base class: shared skeleton/gesture registration rules/tap-outside-to-close/crash protection.
+-- opts: { name, tap_close (default true), log }
+-- Returns popup (an InputContainer instance); the business layer puts content in popup[1].
+-- Not shown here: the concrete component (Dialog/ValuePicker) is responsible for that.
 function M.newModal(opts)
     opts = opts or {}
     local popup = InputContainer:extend{
@@ -96,8 +96,8 @@ function M.newModal(opts)
         stop_events_propagation = true,
     }:new{}
     if opts.tap_close ~= false then
-        -- 点空白处关闭。必须注册手势:stop_events_propagation=true 会让
-        -- onGesture 无条件消费所有手势,没有 ges_events 弹窗把输入全吞掉
+        -- Tap outside to close. Gestures must be registered: stop_events_propagation=true makes
+        -- onGesture unconditionally consume all gestures; without ges_events the popup swallows all input
         popup.ges_events = {
             TapSelect = {
                 GestureRange:new{ ges = "tap", range = popup.dimen },
@@ -108,7 +108,7 @@ function M.newModal(opts)
             return true
         end
     end
-    -- 崩溃保护:所有事件入口(含子组件/按钮回调)包 pcall,错误记日志并消费事件
+    -- Crash protection: all event entry points (including child component/button callbacks) wrapped in pcall; errors are logged and the event consumed
     local orig_handle = popup.handleEvent
     function popup:handleEvent(ev)
         local ok, res = pcall(orig_handle, self, ev)
@@ -121,13 +121,13 @@ function M.newModal(opts)
     return popup
 end
 
--- ============================ Dialog(圆角可拖动面板) ============================
+-- ============================ Dialog (rounded draggable panel) ============================
 
--- 底部锚定圆角白底可拖动面板弹窗(初始靠近工具栏上方,可拖动):
--- BottomContainer → MovableContainer → FrameContainer{radius, 白底} → content;
--- 不设 covers_fullscreen:拖动时下层画布能重绘,MovableContainer 移动时
--- setDirty("all") + 旧∪新区域 "ui" 刷新 → 拖动无残影。
--- opts: { name, title, content, log };返回 popup。
+-- Bottom-anchored rounded white draggable panel popup (initially just above the toolbar, draggable):
+-- BottomContainer -> MovableContainer -> FrameContainer{radius, white background} -> content;
+-- covers_fullscreen is not set: the canvas underneath can redraw while dragging; when MovableContainer moves it does
+-- setDirty("all") + a "ui" refresh of the old ∪ new region -> no ghosting while dragging.
+-- opts: { name, title, content, log }; returns popup.
 function M.showCenteredDialog(opts)
     opts = opts or {}
     local popup = M.newModal{ name = opts.name or "DrawingDialog", log = opts.log }
@@ -149,12 +149,12 @@ function M.showCenteredDialog(opts)
             content,
         },
     }
-    popup.movable = mc -- 与 InputDialog 的 self.movable 约定一致
-    -- 底部锚定(v62f):面板初始位置靠近底部工具栏上方(留 5px 空白),不遮挡画面中心;
-    -- 仍可拖动(MovableContainer)。bottom_clear = 需避让的底部高度(工具栏+状态栏),
-    -- 缺省按画板固定栏高 52+28 估算。
-    -- 水平锚定(v62g):opts.anchor_x = 一级图标/条目中心 x,面板中心尽量对齐它
-    -- (左右夹紧不出屏);缺省水平居中。构造后先预计算面板尺寸再定位。
+    popup.movable = mc -- same convention as InputDialog's self.movable
+    -- Bottom anchoring (v62f): the panel starts just above the bottom toolbar (5px gap), not covering the centre of the picture;
+    -- still draggable (MovableContainer). bottom_clear = bottom height to avoid (toolbar + status bar),
+    -- defaults to an estimate from the board's fixed bar heights 52+28.
+    -- Horizontal anchoring (v62g): opts.anchor_x = centre x of the top-level icon/item; the panel centre aligns to it where possible
+    -- (clamped left/right to stay on screen); centred horizontally by default. After construction, the panel size is precomputed before positioning.
     local bottom_clear = opts.bottom_clear
     if bottom_clear == nil then
         bottom_clear = Screen:scaleBySize(52) + Screen:scaleBySize(28)
@@ -163,8 +163,8 @@ function M.showCenteredDialog(opts)
     local ok_size, msize = pcall(function() return mc:getSize() end)
     local pw = ok_size and msize and msize.w or 0
     local ph = ok_size and msize and msize.h or 0
-    -- v62z: 刷新区域只取面板矩形(整屏 ui 刷新在真机上要 1-2s,是弹一级菜单慢的根因);
-    -- 尺寸预估失败时退回整屏,保证可见性
+    -- v62z: refresh region covers only the panel rectangle (a full-screen ui refresh takes 1-2s on the real device, the root cause of slow top-level menus);
+    -- falls back to full screen if the size estimate fails, to guarantee visibility
     local refresh_region
     if pw > 0 and ph > 0 then
         local px = opts.anchor_x
@@ -178,7 +178,7 @@ function M.showCenteredDialog(opts)
         }
         refresh_region = Geom:new{ x = px, y = py, w = pw, h = ph }
     else
-        -- 尺寸预计算失败:退回底部居中(BottomContainer),至少保证完整可见
+        -- Size precompute failed: fall back to bottom-centred (BottomContainer), at least guaranteeing it's fully visible
         popup[1] = BottomContainer:new{
             dimen = Geom:new{
                 x = 0, y = 0,
@@ -188,15 +188,15 @@ function M.showCenteredDialog(opts)
             mc,
         }
     end
-    -- 显式传刷新类型+区域:本树 UIManager._refresh 对 nil 模式直接丢弃(避免无谓全屏刷),
-    -- 不传的话弹窗只进 framebuffer、硬件永不刷新 → "弹窗看不见,拖动后才出现"。
-    -- "ui" = 非闪烁刷新;区域用 modal 全屏 dimen(与关闭时画布全屏重绘一致)。
+    -- Pass the refresh type + region explicitly: this tree's UIManager._refresh drops nil modes outright (avoids pointless full-screen refreshes);
+    -- without it the popup only reaches the framebuffer and the hardware never refreshes -> "popup invisible until dragged".
+    -- "ui" = non-flashing refresh; region is the modal's full-screen dimen (consistent with the full-screen canvas redraw on close).
     UIManager:show(popup, "ui", refresh_region or popup.dimen)
     return popup, mc
 end
 
--- 自定义点击行(自动注册 TapSelect,消除"自定义行不注册手势吞输入锁死"坑):
--- opts: { dimen, onSelect, content };返回 InputContainer 行(row[1] = content)。
+-- Custom tap row (auto-registers TapSelect, eliminating the "custom row doesn't register gestures, swallows input and locks up" pitfall):
+-- opts: { dimen, onSelect, content }; returns an InputContainer row (row[1] = content).
 function M.tapRow(opts)
     local row = InputContainer:extend{
         dimen = opts.dimen,
@@ -207,8 +207,8 @@ function M.tapRow(opts)
             return true
         end,
     }:new{}
-    -- 必须注册手势才会收到点按(自定义行不像 Button 自带手势);
-    -- range 引用 row.dimen:中心布局在 paint 时更新 x/y,匹配用屏幕坐标
+    -- Gestures must be registered to receive taps (custom rows, unlike Button, don't come with gestures);
+    -- range references row.dimen: centred layout updates x/y at paint time, matching uses screen coordinates
     row.ges_events = {
         TapSelect = {
             GestureRange:new{ ges = "tap", range = row.dimen },
@@ -220,7 +220,7 @@ end
 
 -- ============================ Toast ============================
 
--- 统一 Toast(InfoMessage 包装)。timeout 缺省 = 常驻(点按关闭),传秒数则到时自动关
+-- Unified Toast (InfoMessage wrapper). timeout defaults to persistent (tap to close); pass seconds to auto-close when it expires
 function M.showToast(text, timeout)
     local o = { text = L.x(text) }
     if timeout then
@@ -229,13 +229,13 @@ function M.showToast(text, timeout)
     UIManager:show(InfoMessage:new(o))
 end
 
--- ============================ ValuePicker(值调节弹窗) ============================
+-- ============================ ValuePicker (value adjustment popup) ============================
 
--- 值调节弹窗(选中对象灰度/粗细、全局设置、字号):滑条+预设档位+步进行。
+-- Value adjustment popup (selected object grey/width, global settings, font size): slider + preset steps + stepper row.
 -- opts: { title, value, min, max, unit, presets, onchange(v), onclose(v), log }
--- onchange 在值变化时调用(tap/预设/步进/拖动释放 = force;拖动中不调,避免渲染中间态);
--- onclose 在关闭时调用(写撤销等)。
--- 拖动语义:起点在滑条上=调值;其余位置=拖动面板(避免面板挡住画布上正在调整的对象)。
+-- onchange is called when the value changes (tap/preset/stepper/drag release = force; not called mid-drag, to avoid rendering intermediate states);
+-- onclose is called on close (writes undo etc.).
+-- Drag semantics: starting on the slider = adjust value; anywhere else = drag the panel (so it doesn't cover the object being adjusted on the canvas).
 function M.showValuePicker(opts)
     local vmin, vmax = opts.min, opts.max
     local value = math.max(vmin, math.min(vmax, opts.value))
@@ -244,18 +244,18 @@ function M.showValuePicker(opts)
     end
     local unit = opts.unit or ""
 
-    -- 与居中弹窗/笔触弹窗统一:面板由 MovableContainer 承载(跟随手指、无残影)。
-    -- popup/mc 由 showCenteredDialog 在函数尾部创建;这里前置声明供闭包引用
-    -- (Lua 局部变量须先声明后引用,事件触发前已赋值)
+    -- Consistent with centred/brush-tip popups: the panel is carried by a MovableContainer (follows the finger, no ghosting).
+    -- popup/mc are created by showCenteredDialog at the end of the function; forward-declared here for closures to reference
+    -- (Lua locals must be declared before being referenced; they are assigned before any event fires)
     local popup, mc
-    local popupPanelRect -- 当前面板区域(延迟刷新用),尾部赋值
+    local popupPanelRect -- current panel region (for deferred refresh), assigned at the end
 
     local panel_w = math.floor(Screen:getWidth() * const.UI_WIDTH_WIDE)
-    local pbar_w = panel_w - 2 * Size.padding.large -- 滑条宽度(漏定义会致 paint 崩)
-    -- 滑条比按钮略窄:减掉面板 FrameContainer 的 padding+border,保证条体完全落在
-    -- 面板内容区内,任何 DPI 下都不贴边/越界(真机 DPI 放大后滑条曾压到下方按钮)
+    local pbar_w = panel_w - 2 * Size.padding.large -- slider width (leaving it undefined crashes paint)
+    -- Slider slightly narrower than the buttons: subtract the panel FrameContainer's padding+border so the bar sits fully
+    -- inside the panel content area, never touching/overrunning the edges at any DPI (after DPI scaling on the real device the slider once overlapped the buttons below)
     local slider_w = pbar_w - 2 * (Size.padding.default + Size.border.default)
-    -- 步进行 step_bt 后置定义,这里前置声明供 refreshValue 捕获
+    -- Stepper row step_bt is defined later; forward-declared here so refreshValue can capture it
     local step_bt
     local function refreshValue()
         if step_bt and step_bt.button_by_id then
@@ -266,8 +266,8 @@ function M.showValuePicker(opts)
         end
     end
 
-    -- 滑条(带刻度)与下方档位数字:统一按"最大值百分比"排布——
-    -- 最小值 + max*1/8..max*8/8(向下取整,如 max=100 → 1,12,25,...,100)
+    -- Slider (with ticks) and the preset numbers below are laid out uniformly as "percentages of the max value" -
+    -- min value + max*1/8..max*8/8 (floored, e.g. max=100 -> 1,12,25,...,100)
     local preset_values = {}
     local seen = {}
     local function addPreset(v)
@@ -288,7 +288,7 @@ function M.showValuePicker(opts)
     end
     local progress = ProgressWidget:new{
         width = slider_w*0.97,
-        height = Screen:scaleBySize(32), -- 比默认(scaleBySize(40))更紧凑:条体矮,不与上下按钮视觉粘连
+        height = Screen:scaleBySize(32), -- more compact than the default (scaleBySize(40)): shorter bar, doesn't visually stick to the buttons above/below
         ticks = ticks,
         last = vmax,
         percentage = (value - vmin) / math.max(1, vmax - vmin),
@@ -300,12 +300,12 @@ function M.showValuePicker(opts)
     local function setProgressPct()
         progress:setPercentage((value - vmin) / math.max(1, vmax - vmin))
     end
-    -- 滑条命中区域(带触摸余量);拖动中手指可能滑出滑条,由 slider_wrap 放大范围。
-    -- 水平 ±20 便于点中两端值;竖直向下只扩到与预设按键的间隙边界(与布局的
-    -- 3*vertical_large 同表达式,恰与按键区齐平不重叠)——旧版四边各扩 30,
-    -- 向下溢出压进预设数字按键的触摸区,而事件按子控件顺序先到滑条层
-    -- (slider_wrap 在 preset_bt 之前),按键被抢触点(用户实测难触控);
-    -- 向上留 2px:步进行紧贴滑条顶,步进按键是更早的子控件、在自己区域内优先
+    -- Slider hit region (with touch margin); while dragging the finger may slide off the slider, and slider_wrap enlarges the range.
+    -- Horizontal ±20 makes the end values easy to hit; vertically downward it extends only to the gap boundary with the preset keys (same expression
+    -- as the layout's 3*vertical_large, exactly flush with the key area without overlap) - the old version expanded 30 on every side,
+    -- spilling downward into the preset number keys' touch area, and since events reach child widgets in order, the slider layer got them first
+    -- (slider_wrap comes before preset_bt), so the keys lost their touches (user found them hard to hit);
+    -- 2px upward margin: the stepper row sits right above the slider, and stepper keys are earlier children with priority within their own area
     local function sliderHitRect()
         local d = progress.dimen
         if not d then
@@ -316,7 +316,7 @@ function M.showValuePicker(opts)
         local hit_down = 3 * Size.span.vertical_large
         return Geom:new{ x = d.x - hit_w, y = d.y - hit_up, w = d.w + 2 * hit_w, h = d.h + hit_up + hit_down }
     end
-    -- 触摸位置 → 数值(命中滑条命中区域)
+    -- Touch position -> value (within the slider hit region)
     local function posToValue(px, py)
         local r = sliderHitRect()
         if not r then
@@ -332,11 +332,11 @@ function M.showValuePicker(opts)
         return clamp(vmin + math.floor(pct * (vmax - vmin) + 0.5))
     end
 
-    -- 应用值:tap/预设/步进/拖动释放(force)= 应用到画布 + "ui" 刷新;
-    -- 拖动中(非 force)= 只更新滑块 thumb/值标签,不调 onchange、不渲染画布上的对象。
-    -- 逐 tick 渲染对象的中间灰度/粗细会在墨水屏上刷新积压成"拖动路径"残影
-    -- (用户明确要求不需要渲染拖动时的路径),释放时 force 一次性补终态;
-    -- 拖动中用 "fast" 便宜刷新,不积压不残影
+    -- Apply value: tap/preset/stepper/drag release (force) = apply to the canvas + "ui" refresh;
+    -- mid-drag (not force) = only update the slider thumb/value label, don't call onchange or render the object on the canvas.
+    -- Rendering the object's intermediate grey/width every tick builds up a refresh backlog on e-ink that leaves a "drag trail" of ghosting
+    -- (the user explicitly doesn't want the path rendered while dragging); on release, force fills in the final state in one go;
+    -- mid-drag uses the cheap "fast" refresh, no backlog and no ghosting
     local last_apply = 0
     local APPLY_INTERVAL = 0.06
     local function applyValue(v, force)
@@ -352,8 +352,8 @@ function M.showValuePicker(opts)
             if opts.onchange then
                 opts.onchange(value)
             end
-            -- "ui" 面板区域刷新(延迟函数:与对象区域 "ui" 刷新合并时不被降级,
-            -- partial 优先级更高,直接发全屏 partial 会把对象区域降级留残影)
+            -- "ui" refresh of the panel region (deferred function: when merged with the object region's "ui" refresh it isn't downgraded;
+            -- partial has higher priority, so sending a full-screen partial directly would downgrade the object region and leave ghosting)
             UIManager:setDirty(popup, function()
                 local r = popupPanelRect()
                 if r then return "ui", r end
@@ -368,11 +368,11 @@ function M.showValuePicker(opts)
         end
     end
 
-    -- 滑条手势包装层:消费滑条上的 tap/pan/hold(防止 MovableContainer 把面板拖走);
-    -- 拖动中 _dragging 时命中范围放大到全屏(手指滑出滑条仍继续调值);
-    -- 释放兜底全屏,仅本层拖动中才消费,否则交还 MovableContainer(面板拖动)。
-    -- 注意:KOReader 手势事件经 Event:new(name, args, ev) 派发,handler 签名必须
-    -- (_, ges)——args(gsseq.args) 为 nil 也占一位,否则 ges 收到 nil 崩
+    -- Slider gesture wrapper: consumes tap/pan/hold on the slider (stops MovableContainer from dragging the panel away);
+    -- while _dragging, the hit range expands to full screen (keeps adjusting even if the finger slides off the slider);
+    -- release falls back to full screen and is only consumed while this layer is dragging, otherwise handed back to MovableContainer (panel drag).
+    -- Note: KOReader gesture events are dispatched via Event:new(name, args, ev); the handler signature must be
+    -- (_, ges) - args (gsseq.args) takes a slot even when nil, otherwise ges receives nil and crashes
     local slider_wrap
     slider_wrap = InputContainer:extend{
         dimen = Geom:new{ w = slider_w, h = progress.height },
@@ -392,13 +392,13 @@ function M.showValuePicker(opts)
         },
     }:new{}
     slider_wrap._dragging = false
-    slider_wrap.hitRect = sliderHitRect -- 暴露给测试:断言触摸区不覆盖任何按键
+    slider_wrap.hitRect = sliderHitRect -- exposed for tests: assert the touch area doesn't cover any keys
     function slider_wrap:onTapProgress(_, ges)
         local v = posToValue(ges.pos.x, ges.pos.y)
         if v then
             applyValue(v, true)
         end
-        return true -- 命中滑条区域即消费(tap 不关闭弹窗)
+        return true -- consume when hitting the slider region (tap doesn't close the popup)
     end
     function slider_wrap:onPanProgress(_, ges)
         slider_wrap._dragging = true
@@ -410,14 +410,14 @@ function M.showValuePicker(opts)
     end
     function slider_wrap:onPanReleaseProgress(_, ges)
         if slider_wrap._dragging then
-            applyValue(value, true) -- 拖动结束补终态
+            applyValue(value, true) -- drag ended, fill in the final state
             slider_wrap._dragging = false
             return true
         end
-        return false -- 非滑条拖动,交给 MovableContainer
+        return false -- not a slider drag, hand over to MovableContainer
     end
     function slider_wrap:onHoldProgress(_, ges)
-        return true -- 按住滑条:消费,防止 MovableContainer 拖走面板
+        return true -- holding the slider: consume, so MovableContainer doesn't drag the panel away
     end
     function slider_wrap:onHoldPanProgress(_, ges)
         slider_wrap._dragging = true
@@ -432,7 +432,7 @@ function M.showValuePicker(opts)
     end
     slider_wrap[1] = progress_frame
 
-    -- 预设档位(每行 5 个,值已按最大值百分比生成)
+    -- Preset steps (5 per row, values already generated as percentages of the max)
     local preset_rows = {}
     for i = 1, #preset_values, 5 do
         local row = {}
@@ -453,9 +453,9 @@ function M.showValuePicker(opts)
         zero_sep = true,
         show_parent = popup,
     }
-    -- v62t:关闭按钮已移除(点空白处即关闭)
+    -- v62t: close button removed (tap outside to close)
 
-    -- 步进行(滑条上方):-10/-1/[数值]/+1/+10,中间数值黑色显示实时更新(无操作)
+    -- Stepper row (above the slider): -10/-1/[value]/+1/+10; the middle value is shown in black and updates live (no action)
     step_bt = ButtonTable:new{
         width = pbar_w,
         zero_sep = true,
@@ -469,32 +469,32 @@ function M.showValuePicker(opts)
         show_parent = popup,
     }
 
-    -- 弹窗按钮即时响应(与文字弹窗一致,公共组件)
+    -- Instant popup button response (same as the text popup, shared component)
     M.instantButtons(step_bt)
     M.instantButtons(preset_bt)
 
-    -- 面板 + 统一外壳:与居中弹窗/笔触弹窗完全一致(CenterContainer→MovableContainer→
-    -- FrameContainer 圆角白底)。面板拖动由 MovableContainer 内建(跟随手指、
-    -- setDirty("all") + 旧∪新 "ui" 刷新,无残影、无轮廓);滑条拖动由 slider_wrap 消费。
-    -- 注:ButtonTable 不传 show_parent(flash 路径已被 instantButtons 取代,无影响)
-    -- 标题统一走 showCenteredDialog 的标题机制(20 号,与所有弹窗一致)
+    -- Panel + unified shell: exactly the same as the centred/brush-tip popups (CenterContainer -> MovableContainer ->
+    -- FrameContainer rounded white). Panel dragging is built into MovableContainer (follows the finger,
+    -- setDirty("all") + old ∪ new "ui" refresh, no ghosting, no outline); slider dragging is consumed by slider_wrap.
+    -- Note: ButtonTable gets no show_parent (the flash path was replaced by instantButtons, no effect)
+    -- Title goes through showCenteredDialog's title mechanism (size 20, consistent with all popups)
     popup, mc = M.showCenteredDialog{
         name = "DrawingValuePicker",
         title = opts.title,
-        anchor_x = opts.anchor_x, -- 一级控件水平锚定透传
+        anchor_x = opts.anchor_x, -- pass through top-level control horizontal anchoring
         content = VerticalGroup:new{
             align = "center",
             step_bt,
-            -- VerticalSpan:new{ width = Size.span.vertical_large }, -- 滑条与步进行拉开,防真机 DPI 放大后粘连
+            -- VerticalSpan:new{ width = Size.span.vertical_large }, -- separate slider and stepper row, prevents sticking after DPI scaling on the real device
             slider_wrap,
-            VerticalSpan:new{ width = 3*Size.span.vertical_large }, -- 滑条与预设档位按钮拉开,防重叠/越界
+            VerticalSpan:new{ width = 3*Size.span.vertical_large }, -- separate slider and preset buttons, prevents overlap/overrun
             preset_bt,
         },
         log = opts.log,
     }
-    popup.min = vmin -- 暴露给测试/调用方断言取值范围
+    popup.min = vmin -- exposed to tests/callers to assert the value range
     popup.max = vmax
-    -- 当前面板区域(延迟刷新用):MovableContainer dimen 在 paint 时更新
+    -- Current panel region (for deferred refresh): MovableContainer dimen is updated at paint time
     popupPanelRect = function()
         local d = mc.dimen
         if not d then
@@ -502,7 +502,7 @@ function M.showValuePicker(opts)
         end
         return Geom:new{ x = d.x, y = d.y, w = d.w, h = d.h }
     end
-    -- 关闭时回调(写撤销等)
+    -- Callback on close (writes undo etc.)
     local orig_close_widget = popup.onCloseWidget
     function popup:onCloseWidget()
         if opts.onclose then

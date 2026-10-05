@@ -1,12 +1,12 @@
 --[[--
-drawingpad.menus — 工具栏/状态栏/居中弹窗/文字插入/调色板/保存文件夹选择(DrawingCanvas 混合模块)。
+drawingpad.menus - toolbar/status bar/centred popups/text insertion/palette/save folder selection (DrawingCanvas mixin module).
 --]]
 
--- 自定位:把本文件所在目录加入 package.path,使 require("shapes") 与目录无关
+-- Self-locate: add this file's directory to package.path so require("shapes") works regardless of directory
 local __source = debug.getinfo(1, "S").source
 local __self_dir = __source:match("^@(.*)[/\\][^/\\]*$") or "."
 if not package.path:find(__self_dir, 1, true) then
-    -- 同目录短名(shapes/const)与父目录 drawingpad.* 前缀皆可解析,与 drawingpad 所在位置无关
+    -- Both same-directory short names (shapes/const) and the parent-directory drawingpad.* prefix resolve, regardless of where drawingpad lives
     package.path = __self_dir .. "/?.lua;" .. package.path
 end
 local shapes = require("shapes")
@@ -37,29 +37,29 @@ local L = require("drawingpad.i18n")
 
 local M = {}
 
--- ============================ 工具栏 / 分类菜单 ============================
+-- ============================ Toolbar / category menus ============================
 
--- v59b 一级底栏图标化(参考阅读界面 TouchMenu 底栏):7 个入口用 Button{icon},
--- 等宽 7 格;激活态 = 顶部横线在当前打开面板的入口下方断开(TouchMenu 同款)。
--- 图标名见 const.TOOLBAR_ICONS(工具/属性/功能/刷新/保存/隐藏/关闭);
--- self._open_cat 记录当前打开的分类面板(nil=无,横线完整)。
--- 二级面板条目扁平化:无长按,原长按次要功能全部为独立条目(见 TOGGLE_BUTTONS);
--- 底色规则:工具类激活条目(含 矩实/复制/曲填/框擦 变体)浅灰,其余一律白底。
+-- v59b top-level bottom bar turned into icons (modelled on the reader's TouchMenu bottom bar): 7 entries using Button{icon},
+-- 7 equal-width cells; active state = the top rule breaks below the entry whose panel is currently open (same as TouchMenu).
+-- Icon names are in const.TOOLBAR_ICONS (tools/properties/functions/refresh/save/hide/close);
+-- self._open_cat records the currently open category panel (nil = none, rule unbroken).
+-- Second-level panel items are flattened: no long-press, all former long-press secondary functions are separate items (see TOGGLE_BUTTONS);
+-- background rule: active tool items (including the filled-rect/copy/path-fill/box-erase variants) are light grey, everything else white.
 function M:_buildToolbar()
     local Screen_w = Screen:getWidth()
     local n = #const.TOOLBAR_ICONS
     local cell_w = math.floor(Screen_w / n)
     local icon_px = Screen:scaleBySize(const.TOOLBAR_ICON_PX)
     local row_h = icon_px + 2 * Size.padding.default
-    -- 插件自带图标(资源文件随插件放在 <插件目录>/drawingpad/icons/)装入两处:
-    -- ①用户 icons 目录(新版 IconWidget 优先查);②官方 resources/icons/mdlight
-    -- (老版 IconWidget 没有用户目录查找逻辑,mdlight 是唯一保证被搜的目录,
-    --  相对路径基于 koreader 进程 CWD)。内容与已装副本不一致时覆写。
-    -- v61n:必须在本函数按钮构造之前执行——IconWidget 构造期查不到新图标会把
-    -- ICON_NOT_FOUND 缓存进 ICONS_PATH(进程内永久),装晚了真机显示感叹号
+    -- The plugin's bundled icons (resource files shipped in <plugin dir>/drawingpad/icons/) are installed in two places:
+    -- ① the user icons directory (newer IconWidget checks it first); ② the official resources/icons/mdlight
+    -- (older IconWidget has no user-directory lookup, so mdlight is the only directory guaranteed to be searched;
+    --  relative path based on the koreader process CWD). Overwritten when content differs from the installed copy.
+    -- v61n: must run before this function constructs the buttons - if IconWidget can't find a new icon at construction it
+    -- caches ICON_NOT_FOUND in ICONS_PATH (permanently for the process); installed too late, the real device shows an exclamation mark
     pcall(function()
         local lfs = require("libs/libkoreader-lfs")
-        -- 本模块 = <koplugin>/drawingpad/menus.lua → 图标资源在同级 icons/
+        -- This module = <koplugin>/drawingpad/menus.lua -> icon resources are in the sibling icons/
         local src_dir = debug.getinfo(1, "S").source:match("^@(.*)[/\\][^/\\]*$") .. "/icons"
         local targets = {
             DataStorage:getDataDir() .. "/icons",
@@ -97,12 +97,12 @@ function M:_buildToolbar()
             end
         end
     end)
-    -- 一行图标按钮(等宽 6 格居中);v61k:取消图标背景反馈(分类高亮灰底/刷新闪烁
-    -- 均移除),激活指示只保留顶部横线断口
+    -- One row of icon buttons (6 equal-width cells, centred); v61k: icon background feedback removed (category highlight grey/refresh flash
+    -- both removed), the active indicator is just the gap in the top rule
     local cells = {}
     for i, d in ipairs(const.TOOLBAR_ICONS) do
-        -- 坑:local btn = Button:new{ callback 引用 btn } 时,构造表在 local 生效前求值,
-        -- 闭包里的 btn 是全局(nil)——必须拆开声明
+        -- Gotcha: with local btn = Button:new{ callback referencing btn }, the constructor table is evaluated before the local takes effect,
+        -- so btn inside the closure is the global (nil) - the declaration must be split
         local btn
         btn = Button:new{
             id = d.id,
@@ -112,7 +112,7 @@ function M:_buildToolbar()
             icon_height = icon_px,
             bordersize = 0,
             callback = function()
-                -- v62g:一级图标中心 x(弹窗水平锚定)
+                -- v62g: top-level icon centre x (popup horizontal anchoring)
                 self._anchor_x = self:_anchorX(btn)
                 if d.id == "cat_tool" then
                     self:_showCategoryMenu("tool")
@@ -130,11 +130,11 @@ function M:_buildToolbar()
             end,
         }
         cells[i] = self:_toolbarCell(btn, cell_w, row_h)
-        -- v62g:记录图标按钮(弹窗水平锚点用);点按时记下图标中心 x
+        -- v62g: record icon buttons (for popup horizontal anchoring); on tap, note the icon centre x
         self._toolbar_btns = self._toolbar_btns or {}
         self._toolbar_btns[d.id] = btn
     end
-    -- 顶部横线:当前打开面板的入口下方留断口(TouchMenu 同款激活指示)
+    -- Top rule: leave a gap below the entry of the currently open panel (same active indicator as TouchMenu)
     local line_h = math.max(1, Screen:scaleBySize(1))
     local function line(w)
         return LineWidget:new{
@@ -175,7 +175,7 @@ function M:_buildToolbar()
     self.status_h = Screen:scaleBySize(28)
 end
 
--- 一级控件中心 x(弹窗水平锚点):按钮 paint 后才有 dimen;无信息返回 nil(弹窗自行居中)
+-- Top-level control centre x (popup horizontal anchor): buttons only have dimen after paint; returns nil without info (popup centres itself)
 function M:_anchorX(btn)
     local d = btn and btn.dimen
     if d and d.x and d.w then
@@ -184,7 +184,7 @@ function M:_anchorX(btn)
     return nil
 end
 
--- 底栏单格:图标按钮居中于等宽格(CenterContainer 固定尺寸格)
+-- Single bottom-bar cell: icon button centred in an equal-width cell (fixed-size CenterContainer cell)
 function M:_toolbarCell(btn, cell_w, row_h)
     local CenterContainer = require("ui/widget/container/centercontainer")
     return CenterContainer:new{
@@ -193,11 +193,11 @@ function M:_toolbarCell(btn, cell_w, row_h)
     }
 end
 
--- 最小化/恢复(覆盖核心同名方法,合并顺序在本文件生效):
--- 核心 _setMinimized 结尾发的是整屏 `setDirty(self, "full")` —— 墨水屏上就是一次
--- 可见闪屏,而真正变的像素只有底部那一条(工具栏+状态栏:最小化时画布重新露出来,
--- 恢复时工具栏重新画上;浮动"菜单"恢复键也在这条里)。这里只吸收核心那发整屏刷
--- (画布其他刷新照旧放行,如取消选中发的区域刷),改用底部一条的 "ui" 区域刷。
+-- Minimise/restore (overrides the core's same-named method; takes effect through the merge order of this file):
+-- the core's _setMinimized ends with a full-screen `setDirty(self, "full")` - on e-ink that's a
+-- visible flash, while the only pixels that actually change are the strip at the bottom (toolbar + status bar: when minimising the canvas is uncovered,
+-- when restoring the toolbar is redrawn; the floating "Menu" restore key is also in that strip). Here we only absorb the core's full-screen refresh
+-- (other canvas refreshes still pass through, e.g. the region refresh from deselecting) and use a "ui" region refresh of the bottom strip instead.
 function M:_toggleMinimize()
     local want = not self._minimized
     if self._minimized == want then
@@ -224,7 +224,7 @@ function M:_toggleMinimize()
     end)
 end
 
--- 分类面板开/关后重建工具栏(断线位置变化)+ 底部区域 "ui" 刷新
+-- Rebuild the toolbar after a category panel opens/closes (gap position changes) + "ui" refresh of the bottom region
 function M:_refreshToolbar()
     if self._minimized then
         return
@@ -243,10 +243,10 @@ function M:_refreshToolbar()
     end)
 end
 
--- 分类面板条目表(v59b 扁平化:取消长按,原长按次要功能全部拆成独立条目)。
--- 每项:id/cat/label(+可选 text_fn 动态文字)/active_fn(工具类浅灰底唯一来源)/on_tap。
--- 工具类变体条目(矩实/复制/曲填/框擦)直接把状态设到位(非切换),激活判定=工具+模式;
--- close_on_tap 缺省 = 非功能类点选后关面板(功能类保持,撤销/重做/清空可连点)。
+-- Category panel item table (v59b flattening: long-press removed, all former long-press secondary functions split into separate items).
+-- Each item: id/cat/label (+ optional text_fn for dynamic text)/active_fn (sole source of the light-grey background for tool items)/on_tap.
+-- Tool variant items (filled rect/copy/path fill/box erase) set the state directly (not a toggle); active check = tool + mode;
+-- close_on_tap defaults to closing the panel after tapping non-function items (function items stay open so undo/redo/clear can be tapped repeatedly).
 local function toolSet(tool, fields)
     return function(s)
         s:_setTool(tool)
@@ -261,8 +261,8 @@ local function toolSet(tool, fields)
 end
 
 local TOGGLE_BUTTONS = {
-    -- 工具类:变体合并进主条目(名称带复选框;已激活再次点选 = 切换勾选)
-    -- v62n:英文为源语言(对齐 plugin_manager.koplugin),中文经 i18n dict/L.t 查表
+    -- Tool items: variants merged into the main item (name carries a checkbox; tapping again when already active = toggle the check)
+    -- v62n: English is the source language (aligned with plugin_manager.koplugin), Chinese is looked up via i18n dict/L.t
     { id = "brush_btn",  cat = "tool", label = "Brush",
       active_fn = function(s) return s.tool == "brush" end,
       on_tap = toolSet("brush") },
@@ -270,7 +270,7 @@ local TOGGLE_BUTTONS = {
       active_fn = function(s) return s.tool == "line" end,
       on_tap = toolSet("line") },
     { id = "rect_btn",   cat = "tool",
-      -- v59e:短按=切矩形工具,长按=切换 ☑填充
+      -- v59e: tap = switch to the rectangle tool, long-press = toggle ☑Fill
       text_fn = function(s)
           return L.t("Rect(", "矩形(") .. (s.rect_filled and "☑" or "☐") .. L.t(" fill)", "填充)")
       end,
@@ -288,7 +288,7 @@ local TOGGLE_BUTTONS = {
       active_fn = function(s) return s.tool == "text" end,
       on_tap = toolSet("text") },
     { id = "select_btn", cat = "tool",
-      -- v59g:选择+复制合并(☑复制);短按=切选择工具,长按=切 ☑复制
+      -- v59g: select + copy merged (☑Copy); tap = switch to the select tool, long-press = toggle ☑Copy
       text_fn = function(s)
           return L.t("Select(", "选择(") .. (s.select_mode == "copy" and "☑" or "☐") .. L.t(" copy)", "复制)")
       end,
@@ -296,7 +296,7 @@ local TOGGLE_BUTTONS = {
       on_tap = toolSet("select"),
       on_hold = function(s) s:_setTool("select"); s:_toggleSelectMode() end },
     { id = "fill_btn",   cat = "tool",
-      -- v59g:点填充+路径填充合并(☑路径);短按=切填充工具(点填),长按=切 ☑路径(描边填)
+      -- v59g: tap fill + path fill merged (☑Path); tap = switch to the fill tool (tap fill), long-press = toggle ☑Path (stroke fill)
       text_fn = function(s)
           return L.t("Fill(", "填充(") .. (s.fill_mode == "path" and "☑" or "☐") .. L.t(" path)", "路径)")
       end,
@@ -304,22 +304,22 @@ local TOGGLE_BUTTONS = {
       on_tap = toolSet("fill"),
       on_hold = function(s) s:_setTool("fill"); s:_toggleFillMode() end },
     { id = "eraser_btn", cat = "tool",
-      -- v59f:重命名 擦除(☑框选);短按=切橡皮工具,长按=切换 画笔删/框选删
+      -- v59f: renamed Erase (☑Box); tap = switch to the eraser tool, long-press = toggle stroke erase/box erase
       text_fn = function(s)
           return L.t("Erase(", "擦除(") .. (s.eraser_mode == "rect" and L.t("☑box", "☑框选") or L.t("☐box", "☐框选")) .. ")"
       end,
       active_fn = function(s) return s.tool == "eraser" end,
       on_tap = toolSet("eraser"),
       on_hold = function(s) s:_setTool("eraser"); s:_toggleEraserMode() end },
-    -- 属性设置类(随机勾选为状态显示,切换在设置弹窗内的"随机"行)
+    -- Property settings (the random check is a status display; toggled via the "Random" row in the settings popup)
     { id = "gray_btn",  cat = "prop",
-      -- v59e:短按=弹灰度设置,长按=切换 ☑随机
+      -- v59e: tap = open grey settings, long-press = toggle ☑Random
       text_fn = function(s)
           return L.t("Gray(", "灰度(") .. (s.gray_random and "☑" or "☐") .. L.t(" random)", "随机)")
       end,
       on_tap = function(s)
-          -- 有选中对象时保持选中走元素级灰度(_pickGray 内部分派);
-          -- v61o:无选中直接弹全局设置,不再切画笔——属性设置不该改变当前工具
+          -- With a selected object, keep the selection and use element-level grey (dispatched inside _pickGray);
+          -- v61o: without a selection open the global settings directly, no longer switching to the brush - property settings shouldn't change the current tool
           s:_pickGray()
       end,
       on_hold = function(s) s:_toggleGrayRandom() end },
@@ -328,24 +328,24 @@ local TOGGLE_BUTTONS = {
           return L.t("Width(", "粗细(") .. (s.width_random and "☑" or "☐") .. L.t(" random)", "随机)")
       end,
       on_tap = function(s)
-          -- 同灰度:选中对象时保持选中(文字/填充提示无线宽,其余对象元素级调节);
-          -- v61o:不再切画笔,保持当前工具
+          -- Same as grey: keep the selection when an object is selected (text/fill notify that they have no line width, other objects adjust per element);
+          -- v61o: no longer switches to the brush, keeps the current tool
           s:_pickWidth()
       end,
       on_hold = function(s) s:_toggleWidthRandom() end },
     { id = "alpha_btn", cat = "prop",
-      -- v62:短按=弹透明度设置,长按=切换 ☑随机(与灰度/粗细同套路);v62h:与笔触对调,排在粗细后
+      -- v62: tap = open opacity settings, long-press = toggle ☑Random (same approach as grey/width); v62h: swapped with brush tip, placed after width
       text_fn = function(s)
           return L.t("Opacity(", "透明度(") .. (s.alpha_random and "☑" or "☐") .. L.t(" random)", "随机)")
       end,
       on_tap = function(s)
-          -- 同灰度:选中对象时保持选中走元素级调节;无选中弹全局设置,不切当前工具
+          -- Same as grey: keep the selection and adjust per element when an object is selected; without a selection open global settings, current tool unchanged
           s:_pickAlpha()
       end,
       on_hold = function(s) s:_toggleAlphaRandom() end },
     { id = "tip_btn",   cat = "prop", label = "Tip",
       on_tap = function(s) s:_showTipMenu() end },
-    -- 图层类(v59f:每层单条目 —— ●当前层 + ☐/☑隐藏;单击=切层选中,长按=切隐藏)
+    -- Layer items (v59f: one item per layer - ●current layer + ☐/☑hidden; tap = switch to and select the layer, long-press = toggle hidden)
     { id = "layer3_btn", cat = "layer", close_on_tap = false,
       text_fn = function(s)
           local mark = (s.active_layer == 3 and "●" or "○")
@@ -374,21 +374,21 @@ local TOGGLE_BUTTONS = {
       on_tap = function(s) s:_switchLayer(1) end,
       on_hold = function(s) s:_toggleLayerVisibleOf(1) end },
     { id = "layer_alpha_btn", cat = "layer", close_on_tap = true,
-      -- v62:当前层整体透明度(草稿层整体调淡);文本带当前值
+      -- v62: overall opacity of the current layer (fade a draft layer as a whole); text includes the current value
       text_fn = function(s)
           local v = (s.layer_alpha and s.layer_alpha[s.active_layer]) or 1
           return L.t("Layer opacity ", "当前层透明度 ") .. math.floor(v * 100 + 0.5) .. "%"
       end,
       on_tap = function(s) s:_pickLayerAlpha() end },
-    -- 功能类(点选后面板保持打开,撤销/重做/清空可连点;退出/关于 v59d 并入)
+    -- Function items (the panel stays open after tapping so undo/redo/clear can be tapped repeatedly; exit/about merged in v59d)
     { id = "undo_btn",  cat = "func", label = "Undo",
       on_tap = function(s) s:_undo() end },
     { id = "redo_btn",  cat = "func", label = "Redo",
       on_tap = function(s) s:_redo() end },
     { id = "clear_btn", cat = "func", label = "Clear",
       on_tap = function(s) s:_clearAll() end },
-    -- v62d:保存=工程文件(.drawing,可重新打开继续编辑);输出=导出 PNG
-    -- v62e 排序(左→右,上→下):撤销 重做 / 清空 打开 / 输出 保存 / 关于 退出
+    -- v62d: Save = project file (.drawing, can be reopened to keep editing); Export = export PNG
+    -- v62e order (left -> right, top -> bottom): Undo Redo / Clear Open / Export Save / About Exit
     { id = "open_proj_btn", cat = "func", label = "Open", close_on_tap = true,
       on_tap = function(s) s:_openProject() end },
     { id = "save_btn",  cat = "func", label = "Export", close_on_tap = true,
@@ -397,7 +397,7 @@ local TOGGLE_BUTTONS = {
       on_tap = function(s) s:_saveProject() end },
     { id = "about_btn", cat = "func", label = "About",
       on_tap = function(s)
-          -- 先关功能面板再弹关于,避免面板还开着盖在底下(弹窗/面板互斥)
+          -- Close the function panel before showing About, so the panel isn't left open underneath (popups/panels are mutually exclusive)
           if s._category_popup then
               UIManager:close(s._category_popup, "full")
           end
@@ -408,27 +408,27 @@ local TOGGLE_BUTTONS = {
 }
 M._toggle_buttons = TOGGLE_BUTTONS
 
--- 生成单个面板条目定义:id/文字/单击(不含关面板逻辑,由 _showCategoryMenu 统一包装)。
--- v59e:带 on_hold 的条目生成 hold_callback(长按切勾选:矩实/圆实/框擦/灰度随机/粗细随机)
+-- Build a single panel item definition: id/text/tap (no panel-closing logic; _showCategoryMenu wraps that uniformly).
+-- v59e: items with on_hold get a hold_callback (long-press toggles the check: filled rect/filled circle/box erase/random grey/random width)
 function M:_toggleDef(t)
     local def = {
         id = t.id,
-        -- v62h:英文菜单(L.x 查字典;text_fn 复合串内部已用 L.t)
+        -- v62h: English menus (L.x dictionary lookup; compound strings in text_fn already use L.t internally)
         text = L.x(t.text_fn and t.text_fn(self) or t.label),
         callback = function()
             t.on_tap(self)
         end,
     }
     if t.enabled_fn then
-        -- v59f:动态可用性(如"字体"选中文字对象才可点);Button enabled=false 自动灰显
+        -- v59f: dynamic availability (e.g. "Font" is tappable only when a text object is selected); Button enabled=false greys it out automatically
         def.enabled = t.enabled_fn(self)
     end
     if t.on_hold then
         def.hold_callback = function()
-            -- 长按勾选切换:短按已切勾选工具的,长按再切一次进勾选态
+            -- Long-press check toggle: for items whose tap already switched to the checked tool, long-press toggles once more into the checked state
             t.on_hold(self)
-            -- 面板保持打开,勾选文字变了必须显式刷 EPD:
-            -- Button:setText 只改内存 widget,真机墨水屏不刷新看起来"无反应"
+            -- The panel stays open, so when the check text changes the EPD must be refreshed explicitly:
+            -- Button:setText only changes the in-memory widget; on the real device the e-ink doesn't refresh and it looks "unresponsive"
             if self._panel_bt then
                 UIManager:setDirty(self._panel_bt, "partial")
             end
@@ -437,8 +437,8 @@ function M:_toggleDef(t)
     return def
 end
 
--- 构造某分类的 ButtonTable(不弹出;_showCategoryMenu 与测试共用)。
--- 每行两个条目(面板紧凑,13 个工具条目单列会超屏);底色规则:工具类激活条目浅灰,其余一律白底。
+-- Build a category's ButtonTable (not shown; shared by _showCategoryMenu and tests).
+-- Two items per row (compact panel; 13 tool items in a single column would overflow the screen); background rule: active tool items light grey, everything else white.
 function M:_categoryBt(cat)
     local defs = {}
     for _, t in ipairs(TOGGLE_BUTTONS) do
@@ -447,13 +447,13 @@ function M:_categoryBt(cat)
         end
     end
     local rows = {}
-    -- v59h:图层分类每行1个(3 按钮垂直对齐一列,宽度统一);其余分类每行2个紧凑排布
+    -- v59h: one per row for the layer category (3 buttons aligned vertically in a column, uniform width); other categories two per row, compact
     local step = (cat == "layer") and 1 or 2
     for i = 1, #defs, step do
         if step == 1 then
             rows[#rows + 1] = { defs[i] }
         else
-            rows[#rows + 1] = { defs[i], defs[i + 1] } -- 末行可能只有 1 个
+            rows[#rows + 1] = { defs[i], defs[i + 1] } -- the last row may have only 1
         end
     end
     local bt = ButtonTable:new{
@@ -476,13 +476,13 @@ end
 
 local CATEGORY_TITLES = { tool = "Tool", prop = "Options", layer = "Layer", func = "Menu" }
 
--- 弹出分类面板(居中圆角可拖动,点空白关闭)。
--- v59:记录 _open_cat 供底栏断线指示;重复点其他分类先关旧面板;关闭时还原横线
+-- Show a category panel (centred, rounded, draggable, tap outside to close).
+-- v59: record _open_cat for the bottom-bar gap indicator; tapping another category closes the old panel first; restore the rule on close
 function M:_showCategoryMenu(cat)
     local popup
     local bt
     bt = self:_categoryBt(cat)
-    -- 条目单击回调通过 get_popup 拿到本面板,按需关闭
+    -- Item tap callbacks get this panel via get_popup and close it as needed
     for _, t in ipairs(TOGGLE_BUTTONS) do
         if t.cat == cat then
             local b = bt.button_by_id[t.id]
@@ -490,11 +490,11 @@ function M:_showCategoryMenu(cat)
                 local orig = b.callback
                 local close = t.close_on_tap
                 if close == nil then
-                    -- 功能类/图层类保持打开(连点/单选勾选状态即时可见)
+                    -- Function/layer items stay open (repeated taps/single-choice check state visible immediately)
                     close = (t.cat ~= "func" and t.cat ~= "layer")
                 end
                 b.callback = function()
-                    -- v62g:面板条目也是一级控件,点按记下其中心 x(二级弹窗锚定)
+                    -- v62g: panel items are top-level controls too; on tap, note their centre x (for second-level popup anchoring)
                     self._anchor_x = self:_anchorX(b) or self._anchor_x
                     orig()
                     if close and popup then
@@ -505,7 +505,7 @@ function M:_showCategoryMenu(cat)
         end
     end
     self._panel_bt = bt
-    -- 面板互斥:换分类时先关旧面板(其 onCloseWidget 会清 _open_cat)
+    -- Panel mutual exclusion: when switching categories, close the old panel first (its onCloseWidget clears _open_cat)
     if self._category_popup then
         UIManager:close(self._category_popup, "full")
         self._category_popup = nil
@@ -535,10 +535,10 @@ function M:_showCategoryMenu(cat)
     self:_log("category menu shown:", cat)
 end
 
--- 最小化时左上角悬浮的"菜单"恢复按钮:
--- 宽度 = 工具栏第一格(隐藏按钮所在格,v59c 隐藏移到最左)宽度,对齐
+-- The floating "Menu" restore button in the top-left when minimised:
+-- width = width of the toolbar's first cell (the hide button's cell; hide moved to the far left in v59c), aligned
 function M:_buildRestoreButton()
-    -- 与底栏同风格:线框上箭头图标按钮(隐藏键的下箭头成对),等宽一格悬浮左上
+    -- Same style as the bottom bar: outline up-arrow icon button (pairs with the hide key's down arrow), one cell wide, floating top-left
     local icon_px = Screen:scaleBySize(const.TOOLBAR_ICON_PX)
     local row_h = icon_px + 2 * Size.padding.default
     local btn = Button:new{
@@ -551,8 +551,8 @@ function M:_buildRestoreButton()
     self.restore_btn = self:_toolbarCell(btn, math.floor(Screen:getWidth() / #const.TOOLBAR_ICONS), row_h)
 end
 
--- 面板动态状态(v59b):text_fn 条目刷文字;v61f 起底色也随 active_fn 实时刷新
--- (切层/切工具后打开着的面板高亮跟手,与 _categoryBt 构造时同一套规则)
+-- Dynamic panel state (v59b): text_fn items refresh their text; since v61f the background also refreshes live with active_fn
+-- (highlight in an open panel follows layer/tool switches, using the same rules as _categoryBt construction)
 function M:_syncToolLabels()
     local bt = self._panel_bt
     if not bt or not bt.button_by_id then
@@ -574,9 +574,9 @@ function M:_syncToolLabels()
     end
 end
 
--- ============================ 状态栏 ============================
+-- ============================ Status bar ============================
 
--- 默认字体:从 fonts 目录取,优先带 CJK 的(中文输入友好);取不到退回 cfont
+-- Default font: taken from the fonts directory, preferring ones with CJK (friendly to Chinese input); falls back to cfont if none found
 function M:_defaultFont()
     local ok, list = pcall(function()
         local FontList = require("fontlist")
@@ -594,7 +594,7 @@ function M:_defaultFont()
     return "cfont"
 end
 
--- 状态栏文本:显示"下次落笔"的状态——工具/模式 + 灰度(是否随机) + 粗细(是否随机) + 当前图层
+-- Status bar text: shows the "next stroke" state - tool/mode + grey (random or not) + width (random or not) + current layer
 function M:_statusText()
     local t = self.tool
     local gray_txt
@@ -612,8 +612,8 @@ function M:_statusText()
     end
     local layer_txt = L.x(const.LAYER_NAMES[self.active_layer])
         .. (self.layer_visible[self.active_layer] and "" or L.t("(hide)", "(隐)"))
-    -- 透明度(下次落笔):随机或非全不透明时才显示,省状态栏宽度;
-    -- 混合模式非正常时叠标记(叠=正片叠底,淡=线性减淡)
+    -- Opacity (next stroke): shown only when random or not fully opaque, saving status bar width;
+    -- a marker is appended when the blend mode is not normal (* = multiply, + = linear dodge; single-character equivalents in Chinese)
     if self.alpha_blend == "multiply" then
         layer_txt = layer_txt .. L.t("*", "叠")
     elseif self.alpha_blend == "dodge" then
@@ -627,7 +627,7 @@ function M:_statusText()
     end
     local base
     if t == "text" then
-        -- 文字:灰度值/字号/字体名/图层
+        -- Text: grey value/font size/font name/layer
         local fname = (self.font or "?"):gsub("%.[^.]+$", "")
         base = string.format("%s %s %s:%d %s %s", L.x(const.TOOL_NAMES[t]), gray_txt, L.t("size", "字号"), self.font_size, fname, layer_txt)
     elseif t == "eraser" then
@@ -644,7 +644,7 @@ function M:_statusText()
             and L.t("fill", "实心") or L.t("line", "空心")
         base = string.format("%s(%s) %s %s %s", L.x(const.TOOL_NAMES[t]), filled, gray_txt, width_txt, layer_txt)
     else
-        -- 画笔/直线显示笔触形状(下次落笔状态的一部分)
+        -- Brush/line show the brush tip shape (part of the next-stroke state)
         local tip_txt = (t == "brush" or t == "line") and (" " .. L.t("tip:", "尖:") .. (L.x(const.TIP_NAMES[self.tip]) or L.x("O"))) or ""
         base = string.format("%s %s %s%s %s", L.x(const.TOOL_NAMES[t]) or t, gray_txt, width_txt, tip_txt, layer_txt)
     end
@@ -656,15 +656,15 @@ function M:_updateStatus()
     UIManager:setDirty(self, "partial")
 end
 
--- ============================ 居中按钮弹窗 ============================
+-- ============================ Centred button popups ============================
 
--- 居中按钮弹窗(图层菜单/灰度设置/粗细设置共用)。
--- KOReader 的 Menu 条目左对齐无法居中,这里用 ButtonTable(按钮文字天然居中)
--- 包在全屏模态容器里,点空白处关闭。返回 bt(可 button_by_id 改标签)、popup
+-- Centred button popup (shared by the layer menu/grey settings/width settings).
+-- KOReader's Menu items are left-aligned and can't be centred, so this uses a ButtonTable (button text is naturally centred)
+-- wrapped in a full-screen modal container, tap outside to close. Returns bt (labels changeable via button_by_id), popup
 function M:_showCenteredButtons(title, buttons, width_factor)
-    -- 统一走 components.showCenteredDialog(底部锚定圆角可拖动面板 + 点空白关闭);
-    -- 返回 bt(可 button_by_id 改标签)、popup
-    -- v62h:条目文字经英文菜单字典(L.x;title 由 showCenteredDialog 统一翻)
+    -- Everything goes through components.showCenteredDialog (bottom-anchored rounded draggable panel + tap outside to close);
+    -- returns bt (labels changeable via button_by_id), popup
+    -- v62h: item text goes through the English menu dictionary (L.x; the title is translated centrally by showCenteredDialog)
     if L.lang == "en" and buttons then
         for _, row in ipairs(buttons) do
             for _, bdef in ipairs(row) do
@@ -688,14 +688,14 @@ function M:_showCenteredButtons(title, buttons, width_factor)
     return bt, popup
 end
 
--- 笔触选择弹窗(居中,带图形预览):7 种笔触,点选设 self.tip 并关闭。
--- wbuilder/WSL 字体集与 Kindle 不同:Font:getFace("infont",20) 可能返回 nil,
--- nil face 进 TextWidget 会在首次 paintTo/getSize 时 nil 解引用静默崩(坑 14c)。
--- 本函数全程防御:字体判空回退 + 每行 Blitbuffer/ImageWidget 构造包 pcall + 整函数 pcall 兜底。
+-- Brush tip selection popup (centred, with shape previews): 7 brush tips; tapping sets self.tip and closes.
+-- wbuilder/WSL font sets differ from Kindle: Font:getFace("infont",20) may return nil,
+-- and a nil face in a TextWidget silently crashes with a nil dereference on the first paintTo/getSize (pitfall 14c).
+-- This function is defensive throughout: nil-font fallback + pcall around each row's Blitbuffer/ImageWidget construction + a whole-function pcall as a backstop.
 function M:_showTipMenu()
-    -- 外层 pcall:防首 paint 异常;失败时给可见反馈,而非静默无反应。
-    -- 风格与图层/灰度弹窗一致(圆角可拖动面板,showCenteredDialog),
-    -- 文字统一用 _defaultFont()(与状态栏同源),不硬编码 infont。
+    -- Outer pcall: guards against first-paint exceptions; on failure give visible feedback instead of silently doing nothing.
+    -- Style matches the layer/grey popups (rounded draggable panel, showCenteredDialog),
+    -- text uses _defaultFont() (same source as the status bar) rather than hardcoding infont.
     local ok, err = pcall(M._showTipMenu_core, self)
     if not ok then
         local ok2, msg = pcall(tostring, err)
@@ -705,10 +705,10 @@ function M:_showTipMenu()
 end
 
 function M._showTipMenu_core(self)
-    -- 布局:每行 = ImageWidget(笔触形状预览) + 原生 Button(文字标签),VerticalGroup 居中。
-    -- 点触全部交给原生 Button 自带手势(工具栏/图层菜单同源,wbuilder 已验证),
-    -- 不用自定义 tapRow/GestureRange;预览用裸 Blitbuffer 的 ImageWidget
-    -- (Button.icon 只认图标名不认 BB,且 text 分支优先会忽略 icon,所以放行外)。
+    -- Layout: each row = ImageWidget (brush tip shape preview) + native Button (text label), centred in a VerticalGroup.
+    -- All touch handling goes to the native Button's built-in gestures (same as toolbar/layer menu, verified in wbuilder),
+    -- no custom tapRow/GestureRange; previews use an ImageWidget on a bare Blitbuffer
+    -- (Button.icon only accepts icon names, not BBs, and the text branch takes precedence and ignores icon, so it goes outside).
     local Button = require("ui/widget/button")
     local FrameContainer = require("ui/widget/container/framecontainer")
     local HorizontalGroup = require("ui/widget/horizontalgroup")
@@ -719,10 +719,10 @@ function M._showTipMenu_core(self)
     local VerticalSpan = require("ui/widget/verticalspan")
     local icon_px = Screen:scaleBySize(28)
     local row_h = Screen:scaleBySize(40)
-    -- 图标与文字紧贴(按钮文字左对齐,避免固定宽按钮把文字推远产生大空隙)
+    -- Icon and text sit tight together (button text left-aligned, so a fixed-width button doesn't push the text away leaving a big gap)
     local gap_w = Screen:scaleBySize(4)
     local btn_w = math.floor(Screen:getWidth() * const.UI_WIDTH_NARROW)
-    -- 行间细分隔线(浅灰,比按钮默认边框更雅致)
+    -- Thin separator lines between rows (light grey, more refined than the default button border)
     local sep_w = icon_px + gap_w + btn_w
     local function separator()
         return VerticalGroup:new{
@@ -742,8 +742,8 @@ function M._showTipMenu_core(self)
     local rows = {}
     for _, t in ipairs(const.TIPS) do
         local tip_name, tip_label = t[1], t[2]
-        -- 预览:小画布画笔触形状 -> Blitbuffer(ImageWidget 接管所有权,不再 :free);
-        -- 单行预览失败只丢该行图形,不影响文字与点选。
+        -- Preview: draw the brush tip shape on a small canvas -> Blitbuffer (ImageWidget takes ownership, no more :free);
+        -- a failed preview for one row only drops that row's graphic, without affecting the text or tapping.
         local img_widget
         pcall(function()
             local pv = Blitbuffer.new(icon_px, icon_px, Blitbuffer.TYPE_BB8)
@@ -782,13 +782,13 @@ function M._showTipMenu_core(self)
         else
             row_content = btn
         end
-        -- 行间细分隔线:首行前不加,其余每行前加一条
+        -- Thin separator between rows: none before the first row, one before each other row
         if #rows > 0 then
             rows[#rows + 1] = separator()
         end
         rows[#rows + 1] = row_content
     end
-    -- v62t:关闭按钮已移除(点空白处即关闭,与其他弹窗一致)
+    -- v62t: close button removed (tap outside to close, consistent with other popups)
     popup = components.showCenteredDialog{
         name = "DrawingTipMenu",
         anchor_x = self._anchor_x,
@@ -809,7 +809,7 @@ function M._showTipMenu_core(self)
             end
         end,
     }
-    -- paintTo 崩溃防护(坑 14c),覆盖后续 repaint
+    -- paintTo crash protection (pitfall 14c), covering subsequent repaints
     if popup and popup.paintTo then
         local orig_paintTo = popup.paintTo
         function popup:paintTo(...)
@@ -825,30 +825,30 @@ function M._showTipMenu_core(self)
     self:_log("tip menu shown")
 end
 
--- ============================ 文字插入 ============================
+-- ============================ Text insertion ============================
 
--- 文字插入/编辑对话框。
--- el 存在 = 编辑已存在的文字元素(选中文字 → 点"文字"工具 → 属性修改:内容/字体/字号),
--- 预填当前内容与字体信息,确认后 _updateTextElement 更新元素(可撤销);
--- el 为 nil = 插入新文字,输入框自动填入上次输入的内容,字体/字号恢复上次提交的值
+-- Text insert/edit dialog.
+-- el present = edit an existing text element (select text -> tap the "Text" tool -> edit properties: content/font/size),
+-- prefilled with the current content and font info; on confirm _updateTextElement updates the element (undoable);
+-- el nil = insert new text; the input box is auto-filled with the last input, and font/size are restored to the last committed values
 function M:_showTextDialog(x, y, el)
     local self_widget = self
     local is_edit = el ~= nil
     local dlg
     if is_edit then
-        -- 编辑模式:字体/字号切到对象当前值(按钮显示/修改对象属性);
-        -- 快照原始属性:编辑期间 字体/字号 实时应用到元素(no_undo),
-        -- 关闭(更新/取消)时统一用快照写一条 transform 撤销
+        -- Edit mode: font/size switch to the object's current values (buttons show/modify the object's properties);
+        -- snapshot the original properties: during editing font/size are applied live to the element (no_undo),
+        -- and on close (update/cancel) a single transform undo is written from the snapshot
         self.font = el.font
         self.font_size = el.size
         self._text_edit_orig = self:_cloneElement(el)
     elseif self._last_font then
-        -- 插入模式:自动恢复上次输入使用的字体信息
+        -- Insert mode: automatically restore the font info used for the last input
         self.font = self._last_font
         self.font_size = self._last_font_size
         self._text_edit_orig = nil
     end
-    -- 字体/字号按钮:选中后实时更新弹窗内按钮标签
+    -- Font/size buttons: update the button labels in the popup live after selection
     local function fontLabel()
         return L.t("Font: ", "字体: ") .. ((self.font or "?"):gsub("%.[^.]+$", ""))
     end
@@ -875,7 +875,7 @@ function M:_showTextDialog(x, y, el)
             or L.t("Enter text to insert", "输入要插入的文字(灰度用工具栏调整)"),
         buttons = {
             {
-                -- 字体/字号整合进文字弹窗
+                -- Font/size integrated into the text popup
                 { id = "font_btn", text = fontLabel(),
                   callback = function() self_widget:_pickFont(updateFontLabel) end },
                 { id = "size_btn", text = L.t("Size: ", "字号: ") .. self.font_size,
@@ -894,9 +894,9 @@ function M:_showTextDialog(x, y, el)
                     is_enter_default = true,
                     callback = function()
                         local text = dlg:getInputText()
-                        -- 先应用再关闭:编辑期间的实时属性改动已落在元素上,
-                        -- _updateTextElement 用 _text_edit_orig 快照写撤销;
-                        -- 先关闭会让 onCloseWidget 抢先看到快照,造成重复撤销
+                        -- Apply first, then close: live property changes during editing already landed on the element,
+                        -- and _updateTextElement writes the undo from the _text_edit_orig snapshot;
+                        -- closing first would let onCloseWidget see the snapshot first, causing a duplicate undo
                         if is_edit then
                             self_widget:_updateTextElement(el, text)
                         else
@@ -908,9 +908,9 @@ function M:_showTextDialog(x, y, el)
             },
         },
     }
-    -- 对话框按钮即时响应(去掉 flash_ui 阻塞,公共组件)
+    -- Instant dialog button response (drop the blocking flash_ui, shared component)
     components.instantButtons(dlg.button_table)
-    -- 未点"更新"关闭(取消/返回键/点外部)时:编辑期间实时改过文字属性 → 补写撤销
+    -- When closed without tapping "Update" (cancel/Back key/tap outside): if text properties were changed live during editing -> write the undo
     local orig_dlg_close = dlg.onCloseWidget
     function dlg:onCloseWidget()
         if self_widget._text_edit_orig then
@@ -934,9 +934,9 @@ function M:_showTextDialog(x, y, el)
     dlg:onShowKeyboard()
 end
 
--- 修改已存在的文字元素(内容/字体/字号,可撤销,旧∪新区域重绘)。
--- 编辑期间 字体/字号 已实时应用到元素(no_undo),_text_edit_orig 是打开弹窗时的快照,
--- 撤销从快照到最终值(覆盖实时改动全程)
+-- Modify an existing text element (content/font/size, undoable, redraw the old ∪ new region).
+-- During editing font/size are already applied live to the element (no_undo); _text_edit_orig is the snapshot taken when the popup opened,
+-- and the undo goes from the snapshot to the final value (covering all the live changes)
 function M:_updateTextElement(el, text)
     if not el or el.kind ~= "text" then
         return
@@ -955,7 +955,7 @@ function M:_updateTextElement(el, text)
     local final = self:_cloneElement(el)
     self._text_edit_orig = nil
     if orig.text == final.text and orig.font == final.font and orig.size == final.size then
-        return -- 无变化(含实时改回原值)
+        return -- no change (including live changes reverted to the original value)
     end
     local region = self:_mergeRegions(old_region, self:_elementRegion(el))
     self:_redrawRegion(region)
@@ -965,8 +965,8 @@ function M:_updateTextElement(el, text)
     self:_log("update text", string.format("%q", text), "font", self.font, self.font_size)
 end
 
--- 编辑文字中:实时应用 字体/字号 到选中文字元素(逐 tick 调用,不写撤销;
--- 撤销统一由 _updateTextElement/onCloseWidget 用 _text_edit_orig 快照写一条)
+-- While editing text: apply font/size live to the selected text element (called per tick, no undo written;
+-- the undo is written once by _updateTextElement/onCloseWidget from the _text_edit_orig snapshot)
 function M:_applySelectedTextStyle()
     local el = self._selected
     if not el or el.kind ~= "text" then
@@ -985,7 +985,7 @@ function M:_applySelectedTextStyle()
     self:_log("text style live ->", self.font, self.font_size)
 end
 
--- 选中文字对象 → 属性修改菜单入口(点"文字"工具触发,见 _setTool)
+-- Selected text object -> entry to the property edit menu (triggered by tapping the "Text" tool, see _setTool)
 function M:_editSelectedText()
     local el = self._selected
     if not el or el.kind ~= "text" then
@@ -999,12 +999,12 @@ function M:_commitText(x, y, text)
         self:_log("text empty, skipped")
         return
     end
-    -- 纯空白(空格/tab/换行)视为取消:渲染不可见却占元素/bbox,徒增困惑
+    -- Pure whitespace (spaces/tabs/newlines) counts as cancel: invisible when rendered but takes up an element/bbox, just confusing
     if not text:find("%S") then
         self:_log("text whitespace-only, skipped")
         return
     end
-    -- 记住本次输入的内容与字体信息:下次点文字工具自动填入
+    -- Remember this input's content and font info: auto-filled the next time the text tool is tapped
     self._last_text = text
     self._last_font = self.font
     self._last_font_size = self.font_size
@@ -1025,7 +1025,7 @@ function M:_commitText(x, y, text)
     self:_drawTextTo(self.canvas_bb, el)
     self:_log("commit text", string.format("%q", text), "at", x, y,
         "font", self.font, self.font_size, "gray", self.gray)
-    -- 上方有可见图层时重放提交区域:直接画进 canvas_bb 的文字不能压住高层墨迹
+    -- Replay the committed region when visible layers lie above: text drawn straight into canvas_bb must not cover higher-layer ink
     local region = self:_elementRegion(el)
     self:_commitRegionReplay(region)
     UIManager:setDirty(self, "partial", region)
@@ -1037,18 +1037,18 @@ function M:_drawTextTo(bb, el, layer_idx)
     end
     local face = Font:getFace(el.font, el.size)
     if not face then
-        -- 字体文件缺失时 getFace 返回 nil:跳过绘制,不再把 nil face 传给
-        -- renderUtf8Text(旧版直接抛 Lua 错误冒泡导致整机退出)
+        -- getFace returns nil when the font file is missing: skip drawing, no longer passing a nil face to
+        -- renderUtf8Text (the old version threw a Lua error that bubbled up and quit the whole program)
         self:_log("draw text skipped: no face for", el.font, el.size)
         return
     end
     local rot = el.rot or 0
     local sx = el.sx or 1
     local sy = el.sy or 1
-    -- 有效透明度 = 元素 × 所在层(缺省当前层);<1 时走临时 BB 逐像素混合路径
+    -- Effective opacity = element × its layer (defaults to the current layer); when <1 take the temp-BB per-pixel blending path
     local alpha = (el.alpha or 1)
         * ((self.layer_alpha and self.layer_alpha[layer_idx or self.active_layer]) or 1)
-    -- 基线取插入点向下约 0.8 字号,让文字主体落在点击点附近
+    -- Baseline is about 0.8 font size below the insertion point, so the body of the text lands near the tap point
     local baseline = (el.y or 0) + math.floor(el.size * 0.8)
     if rot == 0 and sx == 1 and sy == 1 and alpha >= 0.999 then
         RenderText:renderUtf8Text(bb, el.x or 0, baseline,
@@ -1056,7 +1056,7 @@ function M:_drawTextTo(bb, el, layer_idx)
             false, false, Blitbuffer.gray(el.gray))
         return
     end
-    -- 拉伸/旋转:渲染到临时 BB → 按 (sx,sy) 缩放 → 绕锚点(基线左端)逐像素逆变换采样
+    -- Stretch/rotate: render to a temp BB -> scale by (sx,sy) -> per-pixel inverse-transform sampling about the anchor (left end of the baseline)
     local s = RenderText:sizeUtf8Text(0, nil, face, el.text, false, false)
     if not (s and s.x and s.y_top and s.y_bottom) then
         return
@@ -1064,19 +1064,19 @@ function M:_drawTextTo(bb, el, layer_idx)
     local w, h = s.x, s.y_top + s.y_bottom
     local temp = Blitbuffer.new(w, h, Blitbuffer.TYPE_BB8)
     temp:paintRect(0, 0, w, h, Blitbuffer.COLOR_WHITE)
-    -- 半透明:临时 BB 用纯黑渲染(墨量 m=(255-像素)/255 可精确反解),写回时按 alpha 混合;
-    -- 不透明:照常按元素灰度渲染,写回即正常文字
+    -- Semi-transparent: render the temp BB in pure black (ink amount m=(255-pixel)/255 can be inverted exactly), blend by alpha when writing back;
+    -- opaque: render with the element's grey as usual, writing back gives normal text
     RenderText:renderUtf8Text(temp, 0, s.y_top, face, el.text, false, false,
         (alpha < 0.999) and Blitbuffer.gray(1.0) or Blitbuffer.gray(el.gray))
-    -- 缩放后尺寸与锚点(基线左端)在缩放局部系的位置
+    -- Scaled size and the anchor's (left end of the baseline) position in the scaled local frame
     local dw = math.max(1, math.floor(w * sx + 0.5))
     local dh = math.max(1, math.floor(h * sy + 0.5))
-    -- 锚点 = 基线左端(与 _textExtent/_frameCorners 同语义:基线 = el.y + 0.8*字号)。
-    -- 旧版把 el.y 直接当基线,旋转/拉伸后的文字整体上偏 0.8*字号,与选取框错位
+    -- Anchor = left end of the baseline (same semantics as _textExtent/_frameCorners: baseline = el.y + 0.8*font size).
+    -- The old version used el.y directly as the baseline, so rotated/stretched text sat 0.8*font size too high, misaligned with the selection box
     local ax = el.x or 0
     local ay = (el.y or 0) + math.floor(el.size * 0.8)
     local ayl = math.floor(s.y_top * sy + 0.5)
-    -- 缩放矩形绕锚点旋转后的外接范围
+    -- Enclosing extent of the scaled rectangle after rotation about the anchor
     local c, sn = math.cos(rot), math.sin(rot)
     local x0, y0 = 0, -ayl
     local x1, y1 = dw, dh - ayl
@@ -1086,8 +1086,8 @@ function M:_drawTextTo(bb, el, layer_idx)
         math.abs(x1 * sn + y1 * c), math.abs(x0 * sn + y1 * c))
     local x_min, x_max = math.max(0, math.floor(ax - hw)), math.min(bb:getWidth() - 1, math.ceil(ax + hw))
     local y_min, y_max = math.max(0, math.floor(ay - hh)), math.min(bb:getHeight() - 1, math.ceil(ay + hh))
-    -- 混合模式随元素(创建时记录);multiply/dodge 需读 dest,仅 BB8 画布启用
-    -- (拖拽预览的 bb 是屏幕帧缓冲,模拟器为 ColorRGB32,读 .a 会崩 → 回退 normal)
+    -- Blend mode is per element (recorded at creation); multiply/dodge need to read dest, so only enabled on a BB8 canvas
+    -- (the drag preview's bb is the screen framebuffer, ColorRGB32 in the emulator; reading .a crashes -> fall back to normal)
     local mode = el.blend or "normal"
     local okt, ttype = pcall(bb.getType, bb)
     local read_dest = okt and ttype == Blitbuffer.TYPE_BB8
@@ -1095,7 +1095,7 @@ function M:_drawTextTo(bb, el, layer_idx)
     local ink8 = math.floor(255 * (1 - (el.gray or 1)) + 0.5)
     for py = y_min, y_max do
         for px = x_min, x_max do
-            -- 逆旋转到缩放局部系,再逆缩放到自然系
+            -- Inverse-rotate into the scaled local frame, then inverse-scale into the natural frame
             local lx = (px - ax) * c + (py - ay) * sn
             local ly = -(px - ax) * sn + (py - ay) * c + ayl
             local xi = math.floor(lx / sx + 0.5)
@@ -1105,9 +1105,9 @@ function M:_drawTextTo(bb, el, layer_idx)
                 local a8 = pv and pv.a
                 if a8 and a8 < 255 then
                     if alpha < 0.999 then
-                        -- 墨量 m=(255−a8)/255,把墨色按"m·α 不透明度"合成到 dest
-                        -- (out = dest·(1−mα) + 墨色·mα)。normal 用原生 setPixelBlend:
-                        -- 不读 dest 像素且 BB8/RGB32 各类型都正确
+                        -- Ink amount m=(255−a8)/255; composite the ink colour into dest at "m·α opacity"
+                        -- (out = dest·(1−mα) + ink·mα). normal uses the native setPixelBlend:
+                        -- it doesn't read dest pixels and is correct for every type, BB8/RGB32 alike
                         local coverage = math.floor((255 - a8) * alpha + 0.5)
                         if coverage > 0 then
                             if read_dest then
@@ -1126,25 +1126,25 @@ function M:_drawTextTo(bb, el, layer_idx)
     temp:free()
 end
 
--- ============================ 调色板 / 粗细 / 字体 / 字号 ============================
+-- ============================ Palette / width / font / font size ============================
 
--- 数值调节弹窗(滑条 + 预设档位,替代 SpinWidget 的虚拟键盘数字输入——触屏输入不便)。
--- 结构:标题 + 大号当前值 + 可拖动/点按定位的滑条(带刻度)+ 预设档位一键选 + 关闭。
--- 拖动节流参考 KOReader 亮度调节(FrontLightWidget):拖动中限速应用与刷新,pan_release 补终态。
+-- Value adjustment popup (slider + preset steps, replacing SpinWidget's virtual-keyboard number input - awkward on a touchscreen).
+-- Structure: title + large current value + slider that can be dragged/tapped to position (with ticks) + one-tap preset steps + close.
+-- Drag throttling follows KOReader's brightness adjustment (FrontLightWidget): rate-limited apply and refresh while dragging, pan_release fills in the final state.
 -- opts: { title, value, min, max, unit, presets, onchange(v), onclose(v) }
--- onchange 在值变化时调用(实时应用,调用方按 no_undo 语义处理);onclose 在关闭时调用(写撤销等)
--- 实现已迁入 components.showValuePicker(组件库统一维护)
+-- onchange is called when the value changes (applied live; callers handle it with no_undo semantics); onclose is called on close (writes undo etc.)
+-- Implementation moved into components.showValuePicker (maintained centrally in the component library)
 function M:_showValuePicker(opts)
     opts = opts or {}
     opts.log = function(...) self:_log(...) end
-    opts.anchor_x = opts.anchor_x or self._anchor_x -- 二级弹窗锚定一级条目
+    opts.anchor_x = opts.anchor_x or self._anchor_x -- second-level popup anchors to the top-level item
     return components.showValuePicker(opts)
 end
 
--- 灰度/粗细设置弹窗共用生成器(v59 合并,结构/文案/布局一致,仅值域/单位/措辞不同)。
--- 随机模式只在属性面板条目长按切换(灰度(☑随机)/粗细(☑随机)),弹窗内无随机键无提示。
--- opts: { title, ids={4个按钮id}, labels={max,min}, get/set={max,min,levels,fixed},
---         spin={max={标题,min,max},...}, disp(v)→显示串 }
+-- Shared generator for the grey/width settings popups (merged in v59; same structure/copy/layout, only value range/units/wording differ).
+-- Random mode is toggled only by long-pressing the property panel items (Grey (☑Random)/Width (☑Random)); the popup has no random key or hint.
+-- opts: { title, ids={4 button ids}, labels={max,min}, get/set={max,min,levels,fixed},
+--         spin={max={title,min,max},...}, disp(v)→display string }
 function M:_showSettingDialog(o)
     local popup
     local function labels()
@@ -1172,7 +1172,7 @@ function M:_showSettingDialog(o)
             end
         end
         if popup then
-            -- v62z: 只刷面板矩形(不带区域的 partial = 整屏刷新,真机 1-2s,是弹窗慢的元凶)
+            -- v62z: refresh only the panel rectangle (a region-less partial = full-screen refresh, 1-2s on the real device, the culprit behind slow popups)
             if popup[1] and popup[1].dimen then
                 UIManager:setDirty(popup, "ui", popup[1].dimen)
             else
@@ -1181,7 +1181,7 @@ function M:_showSettingDialog(o)
         end
     end
     local function spinval(key)
-        -- 滑条初始值:内部值经 spin_val 映射成显示值(灰度 0-1 → 0-100);缺省 = 内部值
+        -- Slider initial value: the internal value is mapped to the display value via spin_val (grey 0-1 -> 0-100); default = internal value
         local f = o.spin_val and o.spin_val[key]
         return f and f(self) or o.get[key](self)
     end
@@ -1223,7 +1223,7 @@ function M:_showSettingDialog(o)
               end },
         },
     }
-    -- 可选附加行(仅透明度弹窗):混合模式 单键循环 正常→正片叠底→线性减淡
+    -- Optional extra row (opacity popup only): blend mode, single key cycling normal -> multiply -> linear dodge
     if o.mode then
         table.insert(btns, {
             { id = o.ids[5], text = o.mode.label(self),
@@ -1237,7 +1237,7 @@ function M:_showSettingDialog(o)
     refreshLabels()
 end
 
--- 灰度设置弹窗:最大/最小/分级数(2-64)/固定灰度(内部 0-1,显示与输入 0-100%)
+-- Grey settings popup: max/min/number of levels (2-64)/fixed grey (internally 0-1, displayed and entered as 0-100%)
 function M:_pickGray()
     if self.tool == "select" and self._selected then
         return self:_pickElementGray()
@@ -1275,8 +1275,8 @@ function M:_pickGray()
     self:_log("gray dialog", self.gray_random and "random" or "fixed")
 end
 
--- 选中对象灰度调节(选择工具 + 有选中对象时点"灰度"):滑条+预设档位,无中间确认。
--- 逐 tick 实时应用(no_undo 不写撤销),关闭时统一写一条撤销记录
+-- Selected-object grey adjustment (tap "Grey" with the select tool and a selected object): slider + preset steps, no intermediate confirmation.
+-- Applied live per tick (no_undo, no undo written); a single undo record is written on close
 function M:_pickElementGray()
     local el = self._selected
     if not el then
@@ -1309,7 +1309,7 @@ function M:_pickElementGray()
     }
 end
 
--- 选中对象线宽调节(文字/填充无线宽,提示后跳过)
+-- Selected-object line width adjustment (text/fills have no line width; notify and skip)
 function M:_pickElementWidth()
     local el = self._selected
     if not el then
@@ -1344,7 +1344,7 @@ function M:_pickElementWidth()
     }
 end
 
--- 粗细设置弹窗:最粗/最细/分级数(2-64)/固定粗细(px)
+-- Width settings popup: thickest/thinnest/number of levels (2-64)/fixed width (px)
 function M:_pickWidth()
     if self.tool == "select" and self._selected then
         return self:_pickElementWidth()
@@ -1376,7 +1376,7 @@ function M:_pickWidth()
     self:_log("width dialog", self.width_random and "random" or "fixed")
 end
 
--- 透明度设置弹窗:最浓/最淡/分级数(2-64)/固定透明度(内部 0-1,显示与输入 0-100%,100%=不透明)
+-- Opacity settings popup: strongest/faintest/number of levels (2-64)/fixed opacity (internally 0-1, displayed and entered as 0-100%, 100%=opaque)
 function M:_pickAlpha()
     if self.tool == "select" and self._selected then
         return self:_pickElementAlpha()
@@ -1385,7 +1385,7 @@ function M:_pickAlpha()
     self:_showSettingDialog{
         title = "Opacity",
         ids = { "alpha_max_btn", "alpha_min_btn", "alpha_levels_btn", "alpha_fixed_btn", "alpha_blend_btn" },
-        -- 混合模式(仅影响新落笔元素的透明度叠加;点击循环切换)
+        -- Blend mode (only affects how the opacity of newly drawn elements composites; tap to cycle)
         mode = {
             label = function(s)
                 local m = s.alpha_blend or "normal"
@@ -1437,8 +1437,8 @@ function M:_pickAlpha()
     self:_log("alpha dialog", self.alpha_random and "random" or "fixed")
 end
 
--- 选中对象透明度调节(选择工具 + 有选中对象时点"透明度"):滑条+预设档位,无中间确认。
--- 逐 tick 实时应用(no_undo 不写撤销),关闭时统一写一条撤销记录
+-- Selected-object opacity adjustment (tap "Opacity" with the select tool and a selected object): slider + preset steps, no intermediate confirmation.
+-- Applied live per tick (no_undo, no undo written); a single undo record is written on close
 function M:_pickElementAlpha()
     local el = self._selected
     if not el then
@@ -1471,13 +1471,13 @@ function M:_pickElementAlpha()
     }
 end
 
--- 字体选择:列出 KOReader fonts 目录下实际扫描到的字体(FontList,可滚动 Menu)
--- @param on_change 选中字体后的回调(文字插入弹窗用来刷新按钮标签)
+-- Font selection: lists the fonts actually scanned in KOReader's fonts directory (FontList, scrollable Menu)
+-- @param on_change callback after a font is selected (the text insertion popup uses it to refresh button labels)
 function M:_pickFont(on_change)
     local FontList = require("fontlist")
     local Menu = require("ui/widget/menu")
     local list = FontList:getFontList()
-    local menu -- 先声明,供条目回调直接关闭菜单(选中即关,不依赖 Menu 内部路径)
+    local menu -- declared first so item callbacks can close the menu directly (close on select, independent of Menu's internal paths)
     local items = {}
     for _, path in ipairs(list) do
         local fname = path:match("[^/\\]+$")
@@ -1488,14 +1488,14 @@ function M:_pickFont(on_change)
                 text = display,
                 callback = function()
                     self.font = fname
-                    self:_applySelectedTextStyle() -- 编辑文字中:实时改选中文字元素的字体
+                    self:_applySelectedTextStyle() -- while editing text: change the selected text element's font live
                     self:_log("font ->", fname)
                     self:_updateStatus()
                     if on_change then
                         on_change()
                     end
                     if menu then
-                        UIManager:close(menu) -- 选中字体后自动关闭
+                        UIManager:close(menu) -- close automatically after a font is selected
                     end
                 end,
             })
@@ -1510,7 +1510,7 @@ function M:_pickFont(on_change)
         item_table = items,
         width = math.floor(math.min(Screen:getWidth(), Screen:getHeight()) * const.UI_WIDTH_WIDE),
         height = math.floor(Screen:getHeight() * 0.9),
-        -- 兜底:Menu 自身的 close_callback 路径
+        -- Fallback: Menu's own close_callback path
         close_callback = function()
             if menu then
                 UIManager:close(menu)
@@ -1520,8 +1520,8 @@ function M:_pickFont(on_change)
     UIManager:show(menu)
 end
 
--- 字号:滑条+预设档位(替代 SpinWidget 数字键盘;上限 800,预设覆盖常用字号)
--- @param on_change 确认字号后的回调(文字插入弹窗用来刷新按钮标签)
+-- Font size: slider + preset steps (replaces SpinWidget's numeric keypad; max 800, presets cover common sizes)
+-- @param on_change callback after the font size is confirmed (the text insertion popup uses it to refresh button labels)
 function M:_pickFontSize(on_change)
     self:_showValuePicker{
         title = "Size(free)",
@@ -1530,7 +1530,7 @@ function M:_pickFontSize(on_change)
         max = 800,
         onchange = function(v)
             self.font_size = v
-            self:_applySelectedTextStyle() -- 编辑文字中:实时改选中文字元素的字号
+            self:_applySelectedTextStyle() -- while editing text: change the selected text element's font size live
             self:_log("font_size ->", self.font_size)
             self:_updateStatus()
             if on_change then
@@ -1540,16 +1540,16 @@ function M:_pickFontSize(on_change)
     }
 end
 
--- 文件夹选择:Menu 列出 drawingboard/ 根目录与其下子文件夹(选中即关)
--- 注意:lfs.dir 返回 (iter, dir_obj) 两个值,迭代必须带上 dir_obj,
--- 否则子文件夹列表恒为空(只会弹"尚无子文件夹")
--- 选择保存文件夹:任意绝对路径浏览器(结构复刻 memobook 的列表弹窗)。
--- ButtonDialog 大按钮行:顶部控制行 [上一级][选择此目录][关闭],下方每行一个
--- 文件夹(带 "/",点按=进入)/PNG 文件(点按=提交目录+回调文件名)。进入文件夹
--- 关闭当前弹窗重建新弹窗(与 memobook 切列表同套路),可上溯到任意绝对路径。
--- 根目录=drawingboard 时 save_folder 存 "" 保持默认
--- file_ext(可选,默认 "%.png$")=列出的文件扩展名匹配(打开工程时传 "%.drawing$");
--- title_prefix(可选)=弹窗标题前缀(默认"选择保存文件夹: ")
+-- Folder selection: Menu lists the drawingboard/ root and its subfolders (close on select)
+-- Note: lfs.dir returns two values (iter, dir_obj); iteration must pass dir_obj along,
+-- otherwise the subfolder list is always empty (only ever shows "No subfolders yet")
+-- Choose save folder: browser for any absolute path (structure copied from memobook's list popup).
+-- ButtonDialog large button rows: top control row [Up][Select this folder][Close], below it one row per
+-- folder (with "/", tap = enter)/PNG file (tap = commit folder + callback with the filename). Entering a folder
+-- closes the current popup and builds a new one (same approach as memobook switching lists); can go up to any absolute path.
+-- When the root = drawingboard, save_folder stores "" to keep the default
+-- file_ext (optional, default "%.png$") = extension pattern for listed files (opening a project passes "%.drawing$");
+-- title_prefix (optional) = popup title prefix (default "Choose save folder: ")
 function M:_pickSaveFolder(on_change, on_pick_file, file_ext, title_prefix)
     file_ext = file_ext or "%.png$"
     title_prefix = title_prefix or L.t("Choose save folder: ", "选择保存文件夹: ")
@@ -1587,7 +1587,7 @@ function M:_pickSaveFolder(on_change, on_pick_file, file_ext, title_prefix)
         self.save_folder = (cur == base) and "" or cur
         self:_log("save_folder ->", self.save_folder, "pick file", name)
         if on_pick_file then
-            on_pick_file(name:gsub(file_ext, "")) -- 去掉扩展名,保存流程自动补
+            on_pick_file(name:gsub(file_ext, "")) -- strip the extension; the save flow appends it automatically
         end
         if on_change then on_change() end
         if dialog then
@@ -1601,7 +1601,7 @@ function M:_pickSaveFolder(on_change, on_pick_file, file_ext, title_prefix)
             dialog = nil
         end
         local rows = {}
-        -- 顶部控制行(与文件浏览器同款):主目录一键回 drawingboard 根 / 上一级 / 选择此目录 / 关闭
+        -- Top control row (same as the file browser): Home jumps back to the drawingboard root / Up / Select this folder / Close
         local parent = parentOf(cur)
         table.insert(rows, {
             {
@@ -1637,7 +1637,7 @@ function M:_pickSaveFolder(on_change, on_pick_file, file_ext, title_prefix)
                 end,
             },
         })
-        -- 内容行:子文件夹(进入)/已有 PNG 文件(选文件填名)
+        -- Content rows: subfolders (enter)/existing PNG files (pick a file to fill in the name)
         local subs, files = {}, {}
         local ok, iter, dir_obj = pcall(lfs.dir, cur)
         if ok and iter then
@@ -1684,15 +1684,15 @@ function M:_pickSaveFolder(on_change, on_pick_file, file_ext, title_prefix)
     show()
 end
 
--- 关于弹窗:统一居中弹窗(components.showCenteredDialog,与笔触弹窗同构)。
--- 内容拆成独立单行 TextWidget —— 设备端多行 TextWidget 首帧可能整段不显示。
+-- About popup: unified centred popup (components.showCenteredDialog, same structure as the brush tip popup).
+-- Content is split into separate single-line TextWidgets - on the device a multi-line TextWidget may not show at all on the first frame.
 function M:_showAbout()
     local face = Font:getFace(self:_defaultFont(), 18)
     local function line(text)
         return TextWidget:new{ text = text, face = face }
     end
-    -- v62t:关闭按钮已移除(点空白处即关闭)
-    -- v62h:英文菜单选项(循环 自动→中文→English);auto 规则=系统语言非中文→英文
+    -- v62t: close button removed (tap outside to close)
+    -- v62h: English menu options (cycles Auto -> Chinese -> English); auto rule = non-Chinese system language -> English
     local lang_names = { auto = L.t("Language: auto", "菜单语言:自动"), zh = L.t("Language: 中文", "菜单语言:中文"), en = L.t("Language: English", "菜单语言:English") }
     local lang_bt = ButtonTable:new{
         width = math.floor(Screen:getWidth() * const.UI_WIDTH_NARROW),

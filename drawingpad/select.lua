@@ -1,5 +1,5 @@
 --[[--
-drawingpad.select — 选择对象(移动/复制)与变形(缩放/旋转锚点)方法(DrawingCanvas 混合模块)。
+drawingpad.select - object selection (move/copy) and transform (scale/rotate handles) methods (DrawingCanvas mixin module).
 --]]
 
 local Geom = require("ui/geometry")
@@ -9,9 +9,9 @@ local const = require("drawingpad.const")
 
 local M = {}
 
--- ============================ 选择对象(移动/复制) ============================
+-- ============================ Object selection (move/copy) ============================
 
--- 长按选择按钮:切换 移动/复制 模式(按钮文字与状态栏跟随)
+-- Long-press the select button: toggle move/copy mode (button text and status bar follow)
 function M:_toggleSelectMode()
     self.select_mode = (self.select_mode == "move") and "copy" or "move"
     self:_syncToolLabels()
@@ -19,8 +19,8 @@ function M:_toggleSelectMode()
     self:_updateStatus()
 end
 
--- 设置/清除选中对象(更新高亮刷新区域)。
--- 选中对象变化时锚点回到缩放模式(再次点选同一对象才切换 缩放/旋转)
+-- Set/clear the selected object (updates the highlight refresh region).
+-- When the selected object changes, handles return to scale mode (only tapping the same object again toggles scale/rotate)
 function M:_setSelected(el)
     if self._selected == el then
         return
@@ -38,8 +38,8 @@ function M:_setSelected(el)
     UIManager:setDirty(self, "partial", region)
 end
 
--- 选中锚点完整刷新区域:bbox 外扩 手柄半宽+pad(约 12px),保证切换 缩放/旋转 样式时
--- 锚点像素一并刷新(_elementRegion 只盖 bbox±4,画锚点会留残影)
+-- Full refresh region for the selection handles: bbox expanded by handle half-width + pad (about 12px), so that when toggling scale/rotate styles
+-- the handle pixels are refreshed too (_elementRegion only covers bbox±4, drawing handles would leave ghosting)
 function M:_handleRegion(el)
     local b = el._bbox or self:_elementBBox(el)
     if not b then
@@ -56,14 +56,14 @@ function M:_handleRegion(el)
     return Geom:new{ x = rx0, y = ry0, w = rx1 - rx0, h = ry1 - ry0 }
 end
 
--- 按位移应用 移动/复制(选择工具收笔与快速拖动共用)
+-- Apply move/copy by a displacement (shared by select-tool pen-up and fast drag)
 function M:_applySelectDelta(dx, dy)
     local el = self._selected
     if not el or (dx == 0 and dy == 0) then
         return
     end
     if self.select_mode == "copy" then
-        -- 复制:克隆→平移→入栈,原对象不动
+        -- Copy: clone -> translate -> push onto the stack, original object untouched
         local copy = self:_cloneElement(el)
         self:_moveElement(copy, dx, dy)
         table.insert(self.elements, copy)
@@ -75,7 +75,7 @@ function M:_applySelectDelta(dx, dy)
         UIManager:setDirty(self, "partial", region)
         self:_log("select copy", el.kind, dx, dy)
     else
-        -- 移动:旧区域先记录,平移后重绘 旧∪新(旧区域底层墨迹恢复)
+        -- Move: record the old region first, after translating redraw old ∪ new (restores the underlying ink in the old region)
         local old_region = self:_elementRegion(el)
         self:_moveElement(el, dx, dy)
         self:_cacheBBox(el)
@@ -88,8 +88,8 @@ function M:_applySelectDelta(dx, dy)
     end
 end
 
--- 选择工具收笔:按 拖动终点-起点 位移 移动/复制 选中对象。
--- 先取消预览并擦除其累积区域(预览跟随期间中间位置需一并刷新,防残留)
+-- Select-tool pen-up: move/copy the selected object by the drag end-start displacement.
+-- First cancel the preview and erase its accumulated region (intermediate positions during preview following must be refreshed too, to prevent leftovers)
 function M:_finishSelectDrag(x, y)
     self:_cancelDragPreview()
     local prev_region = self._drag_preview_region
@@ -97,7 +97,7 @@ function M:_finishSelectDrag(x, y)
     local drag = self._select_drag
     self._select_drag = nil
     if not (drag and x) then
-        -- 未成移动(松手在画布外等):擦除已显示的预览残留
+        -- No move happened (released outside the canvas, etc.): erase the leftover preview already shown
         if prev_region then
             UIManager:setDirty(self, "partial", prev_region)
         end
@@ -109,13 +109,13 @@ function M:_finishSelectDrag(x, y)
     end
 end
 
--- ============================ 拖拽预览(移动/旋转/缩放) ============================
--- 两段式:①手指停满 MOVE_PREVIEW_DELAY(0.2s,全对象统一含文字)才首次显示(停止位置防抖);
--- ②一旦显示,后续 pan 跟随手指实时更新(不再随移动擦除,消除闪烁抖动),
--- 重绘按 DRAG_PREVIEW_REFRESH_INTERVAL 节流合并区域(墨水屏不逐事件刷新防卡顿)。
--- 拖本体 → 落点预览;旋转模式拖锚点 → 旋转预览;缩放模式拖锚点 → 拉伸预览。
+-- ============================ Drag preview (move/rotate/scale) ============================
+-- Two stages: ① shown for the first time only after the finger rests for MOVE_PREVIEW_DELAY (0.2s, uniform for all objects including text) (stop-position debounce);
+-- ② once shown, subsequent pans update it live following the finger (no longer erased on each move, eliminating flicker/jitter),
+-- redraws are throttled with merged regions per DRAG_PREVIEW_REFRESH_INTERVAL (e-ink doesn't refresh per event, prevents stutter).
+-- Drag the body -> drop preview; drag a handle in rotate mode -> rotate preview; drag a handle in scale mode -> stretch preview.
 
--- 每次 pan 调用:预览未显示则重排首次显示定时器;已显示则实时跟随更新
+-- Called on each pan: if the preview isn't shown yet, reschedule the first-display timer; if shown, follow and update live
 function M:_scheduleDragPreview(x, y)
     if self._drag_preview then
         self:_updateDragPreview(x, y)
@@ -133,8 +133,8 @@ function M:_scheduleDragPreview(x, y)
     UIManager:scheduleIn(const.MOVE_PREVIEW_DELAY, fn)
 end
 
--- 按当前拖拽类型构建预览元素(选中对象克隆+变形),无变化返回 nil。
--- 旋转/缩放/移动的数学与提交时(_finishTransform/_applySelectDelta)完全一致,所见即提交
+-- Build the preview element for the current drag type (clone of the selected object + transform); returns nil if nothing changed.
+-- The rotate/scale/move maths is exactly the same as at commit (_finishTransform/_applySelectDelta), so what you see is what gets committed
 function M:_buildDragPreview(x, y)
     local el = self._selected
     if not el then
@@ -148,18 +148,18 @@ function M:_buildDragPreview(x, y)
         local a0 = math.atan2(tr.y0 - cy, tr.x0 - cx)
         local a1 = math.atan2(y - cy, x - cx)
         if math.abs(a1 - a0) < 0.02 then
-            return nil -- 角度几乎未变
+            return nil -- angle barely changed
         end
         pv = self:_cloneElement(el)
         self:_rotateElement(pv, a1 - a0, cx, cy)
     elseif tr then
-        -- 缩放:旋转形状按 OBB 两轴缩放,其余按锚点拖到当前位置算新包围盒
+        -- Scale: rotated shapes scale along the two OBB axes, others compute a new bounding box from the handle dragged to the current position
         pv = self:_cloneElement(el)
         if not self:_scaleElementOriented(pv, tr.handle, x, y) then
             local sb = tr.bbox
             local nb = self:_transformBBox(tr.handle, sb, x, y)
             if nb.x0 == sb.x0 and nb.y0 == sb.y0 and nb.x1 == sb.x1 and nb.y1 == sb.y1 then
-                return nil -- 尺寸未变
+                return nil -- size unchanged
             end
             self:_scaleElement(pv, sb, nb)
         end
@@ -171,7 +171,7 @@ function M:_buildDragPreview(x, y)
         local dx = math.floor(x - drag.x0 + 0.5)
         local dy = math.floor(y - drag.y0 + 0.5)
         if dx == 0 and dy == 0 then
-            return nil -- 未位移
+            return nil -- no displacement
         end
         pv = self:_cloneElement(el)
         self:_moveElement(pv, dx, dy)
@@ -179,11 +179,11 @@ function M:_buildDragPreview(x, y)
     return pv
 end
 
--- 首次显示定时器到点:构建并立即刷新预览
+-- First-display timer fired: build the preview and refresh it immediately
 function M:_maybeShowDragPreview()
     self._drag_preview_fn = nil
     if not self.canvas_bb then
-        return -- 关闭后挂起的回调:直接丢弃
+        return -- callback still pending after close: just discard it
     end
     local pos = self._drag_preview_pos
     if not pos then
@@ -194,7 +194,7 @@ function M:_maybeShowDragPreview()
         return
     end
     self:_cacheBBox(pv)
-    -- 记录首次显示的旋转角,作为后续跟随重建的节流基准
+    -- Record the rotation angle at first display as the throttling baseline for later follow rebuilds
     local tr = self._transform
     if tr and self._handle_mode == "rotate" then
         local sb = tr.bbox
@@ -209,10 +209,10 @@ function M:_maybeShowDragPreview()
     UIManager:setDirty(self, "partial", self._drag_preview_region)
 end
 
--- 预览已显示后:跟随手指更新预览元素,区域并入累积区,节流重绘。
--- bbox 与当前预览一致(几何未变,如微动/圆旋转)则跳过,不重复刷新=防闪烁、省波形。
--- 旋转预览额外按角度节流重建:每次 pan 全量重栅格化(大 fill 数毫秒到数百毫秒)是
--- 拖拽卡断主因,角度变化小于 DRAG_ROTATE_RECALC_ANGLE 直接跳过(只更新落点位置)
+-- After the preview is shown: follow the finger to update the preview element, merge the region into the accumulated region, throttled redraw.
+-- Skip if the bbox matches the current preview (geometry unchanged, e.g. tiny moves/rotating a circle), no repeated refresh = no flicker, saves waveforms.
+-- Rotation previews are additionally rebuild-throttled by angle: fully re-rasterising on every pan (milliseconds to hundreds of milliseconds for a large fill) is
+-- the main cause of drag stutter, so angle changes below DRAG_ROTATE_RECALC_ANGLE are skipped (only the drop position is updated)
 function M:_updateDragPreview(x, y)
     self._drag_preview_pos = { x = x, y = y }
     if not self._drag_preview then
@@ -225,7 +225,7 @@ function M:_updateDragPreview(x, y)
         local a = math.atan2(y - cy, x - cx)
         local last = self._drag_preview_angle
         if last and math.abs(a - last) < const.DRAG_ROTATE_RECALC_ANGLE then
-            return -- 角度几乎未变:跳过重建与重绘
+            return -- angle barely changed: skip rebuild and redraw
         end
         self._drag_preview_angle = a
     end
@@ -238,7 +238,7 @@ function M:_updateDragPreview(x, y)
     if cur._bbox and pv._bbox
         and cur._bbox.x0 == pv._bbox.x0 and cur._bbox.y0 == pv._bbox.y0
         and cur._bbox.x1 == pv._bbox.x1 and cur._bbox.y1 == pv._bbox.y1 then
-        return -- 可见结果未变,不重绘
+        return -- visible result unchanged, no redraw
     end
     self._drag_preview = pv
     self._drag_preview_region = self:_mergeRegions(self._drag_preview_region, self:_elementRegion(pv))
@@ -252,7 +252,7 @@ function M:_updateDragPreview(x, y)
     end
 end
 
--- 预览跟随节流窗口到点:合并累积区域刷新
+-- Preview follow throttle window fired: refresh the merged accumulated region
 function M:_flushDragPreviewRepaint()
     if self._drag_preview_repaint_fn then
         UIManager:unschedule(self._drag_preview_repaint_fn)
@@ -260,7 +260,7 @@ function M:_flushDragPreviewRepaint()
     end
     self._drag_preview_repaint_pending = false
     if not self.canvas_bb then
-        return -- 关闭后挂起的回调:直接丢弃
+        return -- callback still pending after close: just discard it
     end
     local reg = self._drag_preview_region
     self._drag_preview_region = nil
@@ -269,7 +269,7 @@ function M:_flushDragPreviewRepaint()
     end
 end
 
--- 取消预览定时器与节流任务,清除预览元素(累积区域保留供收笔刷新擦除)
+-- Cancel the preview timer and throttle task, clear the preview element (the accumulated region is kept for the pen-up refresh/erase)
 function M:_cancelDragPreview()
     if self._drag_preview_fn then
         UIManager:unschedule(self._drag_preview_fn)
@@ -284,10 +284,10 @@ function M:_cancelDragPreview()
     self._drag_preview_angle = nil
 end
 
--- ============================ 选中对象 灰度/粗细 调节 ============================
+-- ============================ Selected object grey/width adjustment ============================
 
--- 调整选中对象的灰度(0-1):可撤销,重绘受影响区域。
--- no_undo=true 供直接调节弹窗逐 tick 调用(关闭时统一写一条撤销)
+-- Adjust the selected object's grey (0-1): undoable, redraws the affected region.
+-- no_undo=true lets the direct adjustment popup call it per tick (a single undo is written on close)
 function M:_applySelectedGray(v, no_undo)
     local el = self._selected
     if not el then
@@ -295,13 +295,13 @@ function M:_applySelectedGray(v, no_undo)
     end
     local g = v / 100
     if math.abs((el.gray or 1) - g) < 0.001 then
-        return -- 值未变不产生记录
+        return -- value unchanged, no record created
     end
     local orig = self:_cloneElement(el)
     el.gray = g
     local region = self:_elementRegion(el)
     self:_redrawRegion(region)
-    -- 灰度突变用 ui 波形清 EPD 残影(partial 会留旧灰度,滑块逐 tick 时可见)
+    -- Sudden grey changes use the ui waveform to clear EPD ghosting (partial leaves the old grey, visible as the slider moves tick by tick)
     UIManager:setDirty(self, "ui", region)
     if not no_undo then
         self:_pushUndo({ kind = "transform", el = el, orig = orig, final = self:_cloneElement(el) })
@@ -310,12 +310,12 @@ function M:_applySelectedGray(v, no_undo)
     end
 end
 
--- 调整选中对象的线宽(px):可撤销。线宽影响包围盒,需按 旧∪新 区域重绘。
--- no_undo=true 供直接调节弹窗逐 tick 调用(关闭时统一写一条撤销)
+-- Adjust the selected object's line width (px): undoable. Line width affects the bounding box, so redraw the old ∪ new region.
+-- no_undo=true lets the direct adjustment popup call it per tick (a single undo is written on close)
 function M:_applySelectedWidth(v, no_undo)
     local el = self._selected
     if not el or el.kind == "text" then
-        return -- 文字无线宽
+        return -- text has no line width
     end
     if el.width == v then
         return
@@ -326,7 +326,7 @@ function M:_applySelectedWidth(v, no_undo)
     self:_cacheBBox(el)
     local region = self:_mergeRegions(old_region, self:_elementRegion(el))
     self:_redrawRegion(region)
-    -- 同灰度:粗细变化用 ui 波形清残影(partial 会留旧宽度轮廓)
+    -- Same as grey: width changes use the ui waveform to clear ghosting (partial leaves the old width outline)
     UIManager:setDirty(self, "ui", region)
     if not no_undo then
         self:_pushUndo({ kind = "transform", el = el, orig = orig, final = self:_cloneElement(el) })
@@ -335,8 +335,8 @@ function M:_applySelectedWidth(v, no_undo)
     end
 end
 
--- 调整选中对象的透明度(0-100,100=不透明):可撤销,重绘受影响区域。
--- no_undo=true 供直接调节弹窗逐 tick 调用(关闭时统一写一条撤销)
+-- Adjust the selected object's opacity (0-100, 100=opaque): undoable, redraws the affected region.
+-- no_undo=true lets the direct adjustment popup call it per tick (a single undo is written on close)
 function M:_applySelectedAlpha(v, no_undo)
     local el = self._selected
     if not el then
@@ -344,13 +344,13 @@ function M:_applySelectedAlpha(v, no_undo)
     end
     local a = v / 100
     if math.abs((el.alpha or 1) - a) < 0.001 then
-        return -- 值未变不产生记录
+        return -- value unchanged, no record created
     end
     local orig = self:_cloneElement(el)
     el.alpha = a
     local region = self:_elementRegion(el)
     self:_redrawRegion(region)
-    -- 同灰度:透明度变化用 ui 波形清 EPD 残影(partial 会留旧灰度,滑块逐 tick 时可见)
+    -- Same as grey: opacity changes use the ui waveform to clear EPD ghosting (partial leaves the old grey, visible as the slider moves tick by tick)
     UIManager:setDirty(self, "ui", region)
     if not no_undo then
         self:_pushUndo({ kind = "transform", el = el, orig = orig, final = self:_cloneElement(el) })
@@ -359,24 +359,24 @@ function M:_applySelectedAlpha(v, no_undo)
     end
 end
 
--- ============================ 变形(缩放/旋转锚点) ============================
+-- ============================ Transform (scale/rotate handles) ============================
 
--- 选中框四角(锚点位置):倾斜椭圆(rot≠0)/旋转矩形(poly)用对象自身的旋转外接框(OBB)
--- 紧贴边界,避免轴对齐 AABB 四角悬空一大圈;其余对象用轴对齐外接框+pad。
--- 命中测试与锚点绘制共用同一组角点,保证"所见即所点"
+-- Corners of the selection box (handle positions): tilted ellipses (rot≠0)/rotated rectangles (poly) use the object's own rotated bounding box (OBB)
+-- hugging the boundary, avoiding axis-aligned AABB corners floating far away; other objects use the axis-aligned bounding box + pad.
+-- Hit testing and handle drawing share the same set of corners, guaranteeing "what you see is what you tap"
 function M:_frameCorners(el)
     local pad = 4
     if el.kind == "circle" and (el.rot or 0) ~= 0 then
         local rx, ry = el.rx or el.r, el.ry or el.rx or el.r
         local c, s = math.cos(el.rot), math.sin(el.rot)
-        -- 椭圆 OBB 四角 = 中心 ± rx·u ± ry·v(u/v 为旋转后的两轴)
+        -- Ellipse OBB corners = centre ± rx·u ± ry·v (u/v are the two rotated axes)
         local pts = {
             { x = el.cx + rx * c - ry * s, y = el.cy + rx * s + ry * c },
             { x = el.cx + rx * c + ry * s, y = el.cy + rx * s - ry * c },
             { x = el.cx - rx * c + ry * s, y = el.cy - rx * s - ry * c },
             { x = el.cx - rx * c - ry * s, y = el.cy - rx * s + ry * c },
         }
-        -- 沿径向外扩 pad(锚点略微悬空于椭圆外)
+        -- Expand radially by pad (handles float slightly outside the ellipse)
         for _, p in ipairs(pts) do
             local dx, dy = p.x - el.cx, p.y - el.cy
             local len = math.sqrt(dx * dx + dy * dy)
@@ -387,7 +387,7 @@ function M:_frameCorners(el)
         end
         return pts
     elseif el.kind == "poly" then
-        -- 旋转矩形转 poly:取其角点,绕质心外扩 pad
+        -- Rotated rectangle converted to poly: take its corners, expand by pad about the centroid
         local pts = {}
         local cx, cy = 0, 0
         for i, p in ipairs(el.points) do
@@ -405,9 +405,9 @@ function M:_frameCorners(el)
         end
         return pts
     elseif el.kind == "text" and (el.rot or 0) ~= 0 then
-        -- 旋转文字:4 个渲染角绕锚点旋转(与包围盒同数学),沿径向外扩 pad。
-        -- 旋转中心 = 基线左端(_drawTextTo 变换分支同锚点:基线 = el.y + 0.8*字号),
-        -- 否则选取框绕 el.y 转、渲染绕基线转,旋转后错位 0.8*字号
+        -- Rotated text: rotate the 4 render corners about the anchor (same maths as the bounding box), expand radially by pad.
+        -- Rotation centre = left end of the baseline (same anchor as the _drawTextTo transform branch: baseline = el.y + 0.8*font size),
+        -- otherwise the selection box rotates about el.y while rendering rotates about the baseline, misaligned by 0.8*font size after rotation
         local e = self:_textExtent(el)
         if not e then
             return nil
@@ -446,9 +446,9 @@ function M:_frameCorners(el)
     }
 end
 
--- 命中选中对象的四角变形锚点;返回锚点名(nw/ne/se/sw)或 nil。
--- 缩放/旋转共用同一组四角:再次点选切换 _handle_mode,拖动时按模式分流(见 _finishTransform)。
--- 文字不支持旋转(再次点选不切换),但缩放四角照常命中
+-- Hit-test the selected object's four corner transform handles; returns the handle name (nw/ne/se/sw) or nil.
+-- Scale/rotate share the same four corners: tapping again toggles _handle_mode, and drags are routed by mode (see _finishTransform).
+-- Text doesn't support rotation (tapping again doesn't toggle), but the four scale corners still hit as usual
 function M:_hitHandle(x, y)
     local el = self._selected
     if not el then
@@ -469,9 +469,9 @@ function M:_hitHandle(x, y)
     return nil
 end
 
--- 选择工具变形收笔:按锚点拖拽应用 缩放/旋转 到选中对象(可撤销)。
--- 同一组四角锚点:_handle_mode=="rotate" 时拖角绕包围盒中心旋转,否则按对角缩放。
--- 先取消预览并擦除其累积区域(跟随期间中间位置需一并刷新,防残留)
+-- Select-tool transform pen-up: apply scale/rotate to the selected object from the handle drag (undoable).
+-- Same four corner handles: when _handle_mode=="rotate" dragging a corner rotates about the bounding-box centre, otherwise it scales against the opposite corner.
+-- First cancel the preview and erase its accumulated region (intermediate positions during following must be refreshed too, to prevent leftovers)
 function M:_finishTransform(x, y)
     self:_cancelDragPreview()
     local prev_region = self._drag_preview_region
@@ -479,7 +479,7 @@ function M:_finishTransform(x, y)
     local tr = self._transform
     self._transform = nil
     if not (tr and x) then
-        -- 未成变形(松手在画布外等):擦除已显示的预览残留
+        -- No transform happened (released outside the canvas, etc.): erase the leftover preview already shown
         if prev_region then
             UIManager:setDirty(self, "partial", prev_region)
         end
@@ -496,7 +496,7 @@ function M:_finishTransform(x, y)
         local a1 = math.atan2(y - cy, x - cx)
         self:_rotateElement(el, a1 - a0, cx, cy)
     else
-        -- 旋转形状(锚在 OBB 角上)按自身两轴缩放,否则 AABB 角锚路径
+        -- Rotated shapes (handles on OBB corners) scale along their own two axes, otherwise take the AABB corner-handle path
         if not self:_scaleElementOriented(el, tr.handle, x, y) then
             local nb = self:_transformBBox(tr.handle, sb, x, y)
             self:_scaleElement(el, sb, nb)
@@ -505,15 +505,15 @@ function M:_finishTransform(x, y)
     self:_cacheBBox(el)
     local region = self:_mergeRegions(tr.old_region, self:_elementRegion(el))
     if prev_region then
-        -- 预览跟随期间累积的中间位置残影一并白刷+刷新:
-        -- 漏并则松手后残留多个角度的 fill 影(横纹,拉伸预览区域更大更明显)
+        -- Also white-out + refresh the ghosting of intermediate positions accumulated while the preview followed:
+        -- if omitted, fill ghosts at several angles remain after release (horizontal stripes, larger and more visible in the bigger stretch preview region)
         region = self:_mergeRegions(region, prev_region)
     end
     self:_pushUndo({ kind = "transform", el = el, orig = tr.orig, final = self:_cloneElement(el) })
     self:_clearRedo()
     self:_redrawRegion(region)
-    -- 旋转/缩放是灰色大区域内容突变,EPD partial 刷新会残留灰度条纹(横纹,拉伸更大更明显);
-    -- 用 "ui" 波形刷新一次清除残影
+    -- Rotate/scale are sudden content changes over large grey areas; an EPD partial refresh leaves grey streaks (horizontal stripes, larger and more visible when stretched);
+    -- refresh once with the "ui" waveform to clear the ghosting
     UIManager:setDirty(self, "ui", region)
     self:_log("transform", tr.handle)
 end

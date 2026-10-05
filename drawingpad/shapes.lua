@@ -1,31 +1,31 @@
 --[[--
-绘图板纯渲染原语(shapes)。
+Drawing board pure rendering primitives (shapes).
 
-只依赖 BlitBuffer 的 paintRect/getWidth/getHeight,不依赖 UI,可独立 headless 测试。
-画线 = 相邻点插值 + 逐点画笔触形状(见 shapes.tip),不依赖 BlitBuffer 是否有 drawLine。
+Depends only on BlitBuffer's paintRect/getWidth/getHeight, not on the UI, so it can be tested headless on its own.
+Line drawing = interpolate between adjacent points + stamp the brush tip shape per point (see shapes.tip), regardless of whether BlitBuffer has drawLine.
 
-元素结构(drawElement 分派用):
+Element structure (used for drawElement dispatch):
 - freehand / eraser: { kind, points = {{x,y},...}, width, tip? }
 - line:            { kind, x0, y0, x1, y1, width, tip? }
 - rect:            { kind, x0, y0, x1, y1, width, filled? }
 - circle:          { kind, cx, cy, r, width, filled? }
 
-filled = true 时实心(填充 + 描边);空心(默认)只描边。
-颜色由调用方传入(对 BB8 画布即 Blitbuffer.gray(level) 的 Color8)。
-tip(笔触形状,仅画笔/直线用):circle/square/triangle/triangle_inv/diamond/slash/backslash,
-缺省/其他值 = circle,向后兼容。
+filled = true means solid (fill + outline); hollow (default) is outline only.
+Colour is passed in by the caller (for a BB8 canvas, the Color8 from Blitbuffer.gray(level)).
+tip (brush tip shape, brush/line only): circle/square/triangle/triangle_inv/diamond/slash/backslash,
+missing/other values = circle, for backward compatibility.
 --]]
 
 local shapes = {}
 
--- 画一个 width 见方的点(裁剪到画布内,负坐标/越界安全)
+-- Draw a width-sized square dot (clipped to the canvas, safe for negative coordinates/out of bounds)
 function shapes.dot(bb, x, y, width, color)
     local half = math.floor(width / 2)
     local px = math.floor(x) - half
     local py = math.floor(y) - half
     local bw, bh = bb:getWidth(), bb:getHeight()
     if px + width <= 0 or py + width <= 0 or px >= bw or py >= bh then
-        return -- 完全在画布外
+        return -- completely outside the canvas
     end
     local x0 = math.max(px, 0)
     local y0 = math.max(py, 0)
@@ -34,12 +34,12 @@ function shapes.dot(bb, x, y, width, color)
     bb:paintRect(x0, y0, x1 - x0, y1 - y0, color)
 end
 
--- 圆头笔刷单元:半径 width/2 的实心圆(圆形笔触,粗线采样点,消除斜线/圆的锯齿)
+-- Round brush unit: a solid circle of radius width/2 (circle tip; sample points for thick lines, removes jaggies on diagonals/circles)
 function shapes.roundDot(bb, x, y, width, color)
     shapes.fillCircle(bb, x, y, math.max(0.5, width / 2), color)
 end
 
--- 单位向量(v62i 实心多边形内缩用);零向量返回 {0,0}
+-- Unit vector (used by v62i solid polygon inset); a zero vector returns {0,0}
 local function norm2(dx, dy)
     local len = math.sqrt(dx * dx + dy * dy)
     if len < 1e-6 then
@@ -48,7 +48,7 @@ local function norm2(dx, dy)
     return dx / len, dy / len
 end
 
--- 填充正三角(尖朝上)或倒三角(尖朝下):逐行扫描,半宽从顶点 0 线性到中心 w/2
+-- Fill an upright triangle (apex up) or inverted triangle (apex down): row scan, half-width linear from 0 at the apex to w/2 at the centre
 local function fillTriangle(bb, cx, cy, w, color, inverted)
     w = math.max(2, w)
     local half = w / 2
@@ -67,7 +67,7 @@ local function fillTriangle(bb, cx, cy, w, color, inverted)
     end
 end
 
--- 填充菱形(旋转 45° 的正方形):逐行扫描,半宽从顶点 0 线性到中心 w/2 再收拢
+-- Fill a diamond (square rotated 45°): row scan, half-width linear from 0 at the apex to w/2 at the centre, then narrowing again
 local function fillDiamond(bb, cx, cy, w, color)
     local half = w / 2
     local y0 = math.max(0, math.floor(cy - half))
@@ -84,7 +84,7 @@ local function fillDiamond(bb, cx, cy, w, color)
     end
 end
 
--- 斜线笔触:45° 粗线段(反斜线镜像);斜线与反斜线用细一号的圆头粗线
+-- Slash tip: a 45° thick line segment (backslash is the mirror); slash and backslash use a round-capped thick line one size thinner
 local function fillSlash(bb, cx, cy, w, color, backslash)
     local off = w / 2
     local t = math.max(2, math.floor(w / 3))
@@ -95,7 +95,7 @@ local function fillSlash(bb, cx, cy, w, color, backslash)
     end
 end
 
--- 笔触形状分派:在 (x,y) 处画一个宽为 width 的笔触(全部裁剪到画布内)
+-- Brush tip shape dispatch: draw a tip of width width at (x,y) (everything clipped to the canvas)
 function shapes.tip(bb, x, y, width, color, tip)
     if tip == "square" then
         shapes.dot(bb, x, y, width, color)
@@ -110,14 +110,14 @@ function shapes.tip(bb, x, y, width, color, tip)
     elseif tip == "backslash" then
         fillSlash(bb, x, y, width, color, true)
     else
-        shapes.roundDot(bb, x, y, width, color) -- circle 默认
+        shapes.roundDot(bb, x, y, width, color) -- circle is the default
     end
 end
 
--- 粗线段扫描线填充:条带(沿线段两侧偏移 width/2 的两条平行边)+ 两端圆盖,
--- 逐行求 x 区间合并后填充。相比"采样圆点"拼线,边缘平滑——无圆点采样造成的
--- 边界首行虚线/扇形锯齿(粗线正方形"锯齿严重"的根因)。斜线/圆/笔画同样受益。
--- 端点退化(长度≈0)时画实心圆
+-- Scanline fill for a thick line segment: strip (two parallel edges offset width/2 on each side of the segment) + round caps at both ends,
+-- merge x intervals per row then fill. Compared with building lines from "sampled round dots", edges are smooth - no dashed first row/scalloped jaggies
+-- at the boundary from dot sampling (the root cause of "severe jaggies" on thick-line squares). Diagonals/circles/strokes benefit too.
+-- When the endpoints degenerate (length≈0), draw a solid circle
 function shapes.thickLineFill(bb, x0, y0, x1, y1, width, color)
     local dx, dy = x1 - x0, y1 - y0
     local len = math.sqrt(dx * dx + dy * dy)
@@ -126,23 +126,23 @@ function shapes.thickLineFill(bb, x0, y0, x1, y1, width, color)
         return
     end
     local r = math.max(0.5, width / 2)
-    local ux, uy = dx / len, dy / len -- 单位方向
-    local nx, ny = -uy, ux -- 单位法向
+    local ux, uy = dx / len, dy / len -- unit direction
+    local nx, ny = -uy, ux -- unit normal
     local rnx, rny = nx * r, ny * r
     local y_min = math.max(0, math.floor(math.min(y0, y1) - r))
     local y_max = math.min(bb:getHeight() - 1, math.ceil(math.max(y0, y1) + r))
     local bw = bb:getWidth() - 1
-    -- 中间条带 = 平行四边形 [A+nr, B+nr, B-nr, A-nr],覆盖线段全长(含两端斜切区)。
-    -- 逐行求扫描线与四边的交点区间——只填"两偏移边都横跨"的中段会导致线段
-    -- 两端附近的条带主体缺失,斜角矩形角上露 V 形豁口(旋转后"怪异"根因)
-    -- 性能(v62p):四边端点与斜率在行循环外预计算——原来每行新建 addEdge 闭包
-    -- (每行 1 次闭包分配 + 4 次调用 + 4 次除法),整笔粗线渲染是逐段调用本函数,
-    -- 每段几十行,闭包开销占大头
+    -- Middle strip = parallelogram [A+nr, B+nr, B-nr, A-nr], covering the full segment length (including the bevelled areas at both ends).
+    -- Per row, compute the interval of the scanline's intersections with the four edges - filling only the middle section "spanned by both offset edges"
+    -- leaves the strip body missing near both ends of the segment, exposing V-shaped notches at the corners of angled rectangles (root cause of "weird" results after rotation)
+    -- Performance (v62p): edge endpoints and slopes are precomputed outside the row loop - previously each row created an addEdge closure
+    -- (1 closure allocation + 4 calls + 4 divisions per row); rendering a whole thick stroke calls this function per segment,
+    -- with dozens of rows per segment, so closure overhead dominated
     local e1x, e1y, e1lo, e1hi, e1s, e2x, e2y, e2lo, e2hi, e2s, e3x, e3y, e3lo, e3hi, e3s, e4x, e4y, e4lo, e4hi, e4s
     local has_edges = dy ~= 0
     if has_edges then
         local function edge(px, py, qx, qy)
-            -- 返回 px, py, y范围min, y范围max, 斜率;水平边无交点,斜率置 nil 供行内跳过
+            -- Returns px, py, y-range min, y-range max, slope; horizontal edges have no intersection, slope set to nil so the row loop skips them
             if py == qy then
                 return px, py, py, py, nil
             end
@@ -150,7 +150,7 @@ function shapes.thickLineFill(bb, x0, y0, x1, y1, width, color)
             if qy < py then ylo, yhi = qy, py end
             return px, py, ylo, yhi, (qx - px) / (qy - py)
         end
-        -- 四边:上偏移边 A+nr→B+nr,端边 B+nr→B-nr,下偏移边 B-nr→A-nr,端边 A-nr→A+nr
+        -- Four edges: upper offset edge A+nr→B+nr, end edge B+nr→B-nr, lower offset edge B-nr→A-nr, end edge A-nr→A+nr
         e1x, e1y, e1lo, e1hi, e1s = edge(x0 + rnx, y0 + rny, x1 + rnx, y1 + rny)
         e2x, e2y, e2lo, e2hi, e2s = edge(x1 + rnx, y1 + rny, x1 - rnx, y1 - rny)
         e3x, e3y, e3lo, e3hi, e3s = edge(x1 - rnx, y1 - rny, x0 - rnx, y0 - rny)
@@ -158,7 +158,7 @@ function shapes.thickLineFill(bb, x0, y0, x1, y1, width, color)
     end
     for y = y_min, y_max do
         local x_lo, x_hi = math.huge, -math.huge
-        -- 端盖圆盘(起点/终点)
+        -- End-cap discs (start/end point)
         local h0 = r * r - (y - y0) * (y - y0)
         if h0 >= 0 then
             local h = math.sqrt(h0)
@@ -198,7 +198,7 @@ function shapes.thickLineFill(bb, x0, y0, x1, y1, width, color)
                 if x_hi2 > x_hi then x_hi = x_hi2 end
             end
         else
-            -- 水平线段:条带主体 = [x0,x1] 全宽(端盖圆盘已并入)
+            -- Horizontal segment: strip body = full width [x0,x1] (end-cap discs already merged in)
             if math.abs(y - y0) <= r then
                 if x0 < x_lo then x_lo = x0 end
                 if x1 > x_hi then x_hi = x1 end
@@ -214,8 +214,8 @@ function shapes.thickLineFill(bb, x0, y0, x1, y1, width, color)
     end
 end
 
--- 粗线段:circle 走扫描线条带填充(边缘平滑);非圆笔触沿线段按间距 ~width/2 采样笔触
--- 形状(保持形状可辨又连续)。tip 缺省 = circle,向后兼容
+-- Thick line segment: circle uses the scanline strip fill (smooth edges); non-circle tips are stamped along the segment at ~width/2 spacing
+-- (keeping the shape recognisable yet continuous). tip defaults to circle, for backward compatibility
 function shapes.thickLine(bb, x0, y0, x1, y1, width, color, tip)
     width = width or 4
     local dx, dy = x1 - x0, y1 - y0
@@ -236,11 +236,11 @@ function shapes.thickLine(bb, x0, y0, x1, y1, width, color, tip)
     shapes.thickLineFill(bb, x0, y0, x1, y1, width, color)
 end
 
--- Catmull-Rom 样条段 P1→P2(过点插值、切向连续):P0/P3 为两侧邻点,决定端点切向,
--- 端点外侧用相邻点复制(P0=P1 或 P3=P2)。按 ~2px 弧长采样成短 thickLine
--- (圆头笔触保证段间无缝)。相比中点二次曲线(近似二次 B 样条,会在每个采样点处切角),
--- 过点插值在稀疏采样的闭合曲线(小圆圈)上保持圆滑——8~10 个采样点即可画出圆。
--- 控制点共线时退化为直线,零长度段安全(t=0 起点即 P1)。
+-- Catmull-Rom spline segment P1→P2 (interpolating through points, tangent-continuous): P0/P3 are the neighbours on each side and set the end tangents;
+-- outside the ends the adjacent point is duplicated (P0=P1 or P3=P2). Sampled at ~2px arc length into short thickLines
+-- (round tips keep segments seamless). Compared with midpoint quadratic curves (approximately a quadratic B-spline, which cuts corners at every sample point),
+-- interpolating through points stays smooth on sparsely sampled closed curves (small circles) - 8~10 sample points are enough to draw a circle.
+-- Collinear control points degenerate to a straight line; zero-length segments are safe (t=0 starts at P1).
 function shapes.crSegment(bb, p0, p1, p2, p3, width, color, tip)
     local approx = math.abs(p1.x - p2.x) + math.abs(p1.y - p2.y)
     local steps = math.max(2, math.min(64, math.floor(approx / 2)))
@@ -263,11 +263,11 @@ function shapes.crSegment(bb, p0, p1, p2, p3, width, color, tip)
     end
 end
 
--- 折线(自由画笔/橡皮);ox/oy 为整体偏移(预览画在屏幕 BB 上时用)。
--- Catmull-Rom 过点平滑:首点笔触 → 每相邻两点一段 cr(P[i-1],P[i],P[i+1],P[i+2])
--- (端点邻位钳到首/末点),曲线精确通过每个采样点。
--- 与 strokes.lua 的增量渲染(_renderStrokeTail/_renderStrokeClose)逐段一致:
--- 实时笔迹与重绘完全相同。
+-- Polyline (freehand brush/eraser); ox/oy is the overall offset (used when the preview is drawn on the screen BB).
+-- Catmull-Rom smoothing through points: first-point tip -> one segment cr(P[i-1],P[i],P[i+1],P[i+2]) per adjacent pair
+-- (end neighbours clamped to the first/last point), so the curve passes exactly through every sample point.
+-- Segment-for-segment identical to the incremental rendering in strokes.lua (_renderStrokeTail/_renderStrokeClose):
+-- the live stroke and the redraw are exactly the same.
 function shapes.polyline(bb, points, width, color, ox, oy, tip)
     ox = ox or 0
     oy = oy or 0
@@ -277,7 +277,7 @@ function shapes.polyline(bb, points, width, color, ox, oy, tip)
         shapes.tip(bb, points[1].x + ox, points[1].y + oy, width, color, tip)
         return
     end
-    -- 起点笔触(全宽:起笔即全宽,起笔处的小圆弧清晰可见)
+    -- Start-point tip (full width: full width from pen-down, so small arcs at the start are clearly visible)
     shapes.tip(bb, points[1].x + ox, points[1].y + oy, width, color, tip)
     for i = 1, n - 1 do
         local p0 = points[math.max(1, i - 1)]
@@ -293,7 +293,7 @@ function shapes.polyline(bb, points, width, color, ox, oy, tip)
     end
 end
 
--- 矩形框(仅描边):4 条粗边
+-- Rectangle frame (outline only): 4 thick edges
 function shapes.rect(bb, x0, y0, x1, y1, width, color, tip)
     local xa, xb = math.min(x0, x1), math.max(x0, x1)
     local ya, yb = math.min(y0, y1), math.max(y0, y1)
@@ -303,9 +303,9 @@ function shapes.rect(bb, x0, y0, x1, y1, width, color, tip)
     shapes.thickLine(bb, xa, yb, xa, ya, width, color, tip)
 end
 
--- 椭圆描边:环带扫描线填充(外椭圆 rx+w/2 与内椭圆 rx-w/2 之间逐行填充)。
--- 比"周采样点连粗线"平滑——任意旋转/线宽下轮廓连续,无采样多边形化锯齿。
--- 旋转椭圆在扫描线上的 x 区间由局部椭圆方程 A·dx²+B·dx+C≤0 解出。
+-- Ellipse outline: annulus scanline fill (fill rows between the outer ellipse rx+w/2 and the inner ellipse rx-w/2).
+-- Smoother than "thick lines joining perimeter samples" - continuous outline at any rotation/line width, no polygonised sampling jaggies.
+-- The x interval of a rotated ellipse on a scanline is solved from the local ellipse equation A·dx²+B·dx+C≤0.
 function shapes.ellipse(bb, cx, cy, rx, ry, width, color, tip, rot)
     rx = math.max(0.5, rx or 1)
     ry = math.max(0.5, ry or rx)
@@ -314,7 +314,7 @@ function shapes.ellipse(bb, cx, cy, rx, ry, width, color, tip, rot)
         return
     end
     if tip ~= nil and tip ~= "circle" then
-        -- 非圆笔触(画笔画圆):保持旧周采样连线
+        -- Non-circle tip (brush drawing a circle): keep the old perimeter-sample polyline
         local cosr, sinr = math.cos(rot or 0), math.sin(rot or 0)
         local function point(a)
             local px, py = cx + rx * math.cos(a), cy + ry * math.sin(a)
@@ -332,13 +332,13 @@ function shapes.ellipse(bb, cx, cy, rx, ry, width, color, tip, rot)
         end
         return
     end
-    -- 环带:外椭圆 = rx+w/2,内椭圆 = rx-w/2(太细时退化实心)
+    -- Annulus: outer ellipse = rx+w/2, inner ellipse = rx-w/2 (degenerates to solid when too thin)
     local w2 = math.max(0.5, width / 2)
     local ro_rx, ro_ry = rx + w2, ry + w2
     local ri_rx, ri_ry = math.max(0.2, rx - w2), math.max(0.2, ry - w2)
     local cosr, sinr = math.cos(rot or 0), math.sin(rot or 0)
     local c2, s2 = cosr * cosr, sinr * sinr
-    -- 外椭圆 AABB 半高(旋转):sqrt(ro_rx²·s² + ro_ry²·c²)
+    -- Outer ellipse AABB half-height (rotated): sqrt(ro_rx²·s² + ro_ry²·c²)
     local half_h = math.sqrt(ro_rx * ro_rx * s2 + ro_ry * ro_ry * c2)
     local y_min = math.max(0, math.floor(cy - half_h))
     local y_max = math.min(bb:getHeight() - 1, math.ceil(cy + half_h))
@@ -360,7 +360,7 @@ function shapes.ellipse(bb, cx, cy, rx, ry, width, color, tip, rot)
         if o_lo then
             local i_lo, i_hi = xInterval(ri_rx, ri_ry)
             if not i_lo then
-                -- xInterval 返回相对中心的 dx,转绝对 x 需加 cx
+                -- xInterval returns dx relative to the centre; add cx to convert to absolute x
                 local xa = math.max(0, math.floor(cx + o_lo))
                 local xb = math.min(bw, math.ceil(cx + o_hi))
                 if xb >= xa then
@@ -390,7 +390,7 @@ function shapes.circle(bb, cx, cy, r, width, color, tip)
     shapes.ellipse(bb, cx, cy, r, r, width, color, tip, 0)
 end
 
--- 实心矩形:填充归一化区域(裁剪到画布)
+-- Solid rectangle: fill the normalised region (clipped to the canvas)
 function shapes.fillRect(bb, x0, y0, x1, y1, color)
     local xa, xb = math.min(x0, x1), math.max(x0, x1)
     local ya, yb = math.min(y0, y1), math.max(y0, y1)
@@ -402,12 +402,12 @@ function shapes.fillRect(bb, x0, y0, x1, y1, color)
     bb:paintRect(xa, ya, xb - xa + 1, yb - ya + 1, color)
 end
 
--- 实心圆:逐行扫描填充(裁剪到画布)
+-- Solid circle: row-scan fill (clipped to the canvas)
 function shapes.fillCircle(bb, cx, cy, r, color)
     shapes.fillEllipse(bb, cx, cy, r, r, color)
 end
 
--- 实心椭圆(未旋转):逐行扫描填充(裁剪到画布)
+-- Solid ellipse (unrotated): row-scan fill (clipped to the canvas)
 function shapes.fillEllipse(bb, cx, cy, rx, ry, color)
     rx = math.max(1, rx)
     ry = math.max(1, ry)
@@ -424,12 +424,12 @@ function shapes.fillEllipse(bb, cx, cy, rx, ry, color)
     end
 end
 
--- 实心椭圆(任意旋转):周长 ~1px/点 高采样成多边形走扫描线(偶奇配对),
--- 与 fillEllipse 同视觉;拉伸成旋转椭圆的实心形状不再退化描边。
+-- Solid ellipse (any rotation): densely sampled at ~1px/point of perimeter into a polygon and scanline-filled (even-odd pairing),
+-- looking the same as fillEllipse; solid shapes stretched into rotated ellipses no longer degrade to outlines.
 function shapes.fillRotatedEllipse(bb, cx, cy, rx, ry, rot, color)
     rx = math.max(1, rx)
     ry = math.max(1, ry)
-    -- 采样数 ≈ 周长(2π·√((rx²+ry²)/2) 的粗近似,按 (rx+ry)·π/2 计),钳 32~512
+    -- Sample count ≈ perimeter (rough approximation of 2π·√((rx²+ry²)/2), computed as (rx+ry)·π/2), clamped to 32~512
     local n = math.max(32, math.min(512, math.ceil((rx + ry) * 1.6)))
     local c, s = math.cos(rot), math.sin(rot)
     local pts = {}
@@ -453,10 +453,10 @@ function shapes.fillRotatedEllipse(bb, cx, cy, rx, ry, rot, color)
     end
 end
 
--- 多边形逐行扫描线栅格化(偶奇配对):返回 { [行号] = { {xa, xb}, ... }, ... },
--- 每行的区间已按 x 升序(与 _polygonFillSpans 相同取整规则:ceil(x-0.5)/floor(x+0.5))。
--- fill 旋转时把每个 span 旋转后的平行四边形带重栅格化回 span 列表用(geometry._rotateElement)。
--- 输入点用 {x, y} 数组形式(避免依赖元素点表结构)
+-- Per-row scanline rasterisation of a polygon (even-odd pairing): returns { [row] = { {xa, xb}, ... }, ... },
+-- with each row's intervals sorted by ascending x (same rounding rules as _polygonFillSpans: ceil(x-0.5)/floor(x+0.5)).
+-- Used when rotating a fill to re-rasterise each span's rotated parallelogram band back into a span list (geometry._rotateElement).
+-- Input points are {x, y} arrays (avoids depending on the element point-list structure)
 function shapes.polyRowSpans(pts)
     local rows = {}
     local n = #pts
@@ -494,14 +494,14 @@ function shapes.polyRowSpans(pts)
     return rows
 end
 
--- 多边形活动边表(AET)扫描线栅格化:返回 { [行号] = { {xa, xb}, ... }, ... }。
--- 与 polyRowSpans 结果相同,但每条边只在它的 y 范围被处理一次,每行只遍历活动边
--- (跨该行的边,通常 2-4 条)——fill 旋转时对锯齿轮廓(顶点=每行边界点,数百上千条边)
--- 逐行扫描的开销从 O(边数×行数) 降到 O(边数+行数×活动边数),大 fill 拖拽旋转不卡。
--- 输入点用 {x, y} 数组形式(闭合多边形);水平边跳过;构建边表时合并首尾相连的共线边
--- (fill 轮廓的竖直锯齿边在旋转 90°/180° 后重叠成同一条,不合并会在顶点处重复计数);
--- 边覆盖 [y0,y1] 闭区间——顶点所在行也产生覆盖,旋转 180° 后栅格化结果稳定
--- (半开区间会丢顶行、旋转翻转后 bbox 抖动)。
+-- Polygon active edge table (AET) scanline rasterisation: returns { [row] = { {xa, xb}, ... }, ... }.
+-- Same result as polyRowSpans, but each edge is processed only once over its y range, and each row only walks the active edges
+-- (edges crossing that row, usually 2-4) - when rotating a fill with a jagged outline (vertices = per-row boundary points, hundreds to thousands of edges)
+-- the cost of row-by-row scanning drops from O(edges×rows) to O(edges+rows×active edges), so drag-rotating a large fill doesn't stutter.
+-- Input points are {x, y} arrays (closed polygon); horizontal edges are skipped; collinear edges joined end to end are merged when building the edge table
+-- (vertical jagged edges of a fill outline overlap into one after rotating 90°/180°; without merging they'd be double-counted at vertices);
+-- edges cover the closed interval [y0,y1] - vertex rows also get coverage, so the rasterisation is stable after a 180° rotation
+-- (a half-open interval would drop the top row, and the bbox would jitter after rotation flips it).
 function shapes.polyRowsAET(pts)
     local rows = {}
     local n = #pts
@@ -512,8 +512,8 @@ function shapes.polyRowsAET(pts)
     local function add_edge(a, b)
         local dy = b[2] - a[2]
         if math.abs(dy) < 1e-9 then
-            return -- 水平/近水平边不参与交点(近水平边 dy≈0 → slope 巨大,
-            -- 参与共线合并会放大浮点误差,产生天文数字的 x0 平移/交点)
+            return -- horizontal/near-horizontal edges don't take part in intersections (a near-horizontal edge has dy≈0 -> huge slope;
+            -- taking part in collinear merging would amplify floating-point error, producing astronomical x0 shifts/intersections)
         end
         local y0, y1 = a[2], b[2]
         local x0 = a[1]
@@ -522,9 +522,9 @@ function shapes.polyRowsAET(pts)
         end
         local slope = (b[1] - a[1]) / dy
         local last = edges[#edges]
-        -- 与上一条边首尾相连(顶点序列相邻)且斜率相同 = 共线,合并成一条。
-        -- 连接点按顶点序列判断(规范化 y0/y1 后相邻边方向可能反转,不能按 y 接续判断);
-        -- 合并后 y 范围取 min/max,并把 x0 平移到新 y0 处(x = x0 + slope*(y-y0))
+        -- Joined end to end with the previous edge (adjacent in the vertex sequence) and same slope = collinear, merge into one.
+        -- Connection is judged by vertex sequence (after normalising y0/y1 the direction of adjacent edges may flip, so y continuity can't be used);
+        -- after merging the y range takes min/max, and x0 is shifted to the new y0 (x = x0 + slope*(y-y0))
         if last and last.ex == a[1] and last.ey == a[2]
             and math.abs(last.slope - slope) < 1e-9 then
             local ny0 = math.min(last.y0, y0)
@@ -551,8 +551,8 @@ function shapes.polyRowsAET(pts)
     local eidx = 1
     local aet = {}
     for t = math.floor(y_min), math.ceil(y_max) do
-        local tt = t + 0.5 -- 行中心
-        -- 1) 移除已结束边(闭区间:y1 < tt 结束)
+        local tt = t + 0.5 -- row centre
+        -- 1) Remove finished edges (closed interval: ends when y1 < tt)
         local w = 1
         for i = 1, #aet do
             local e = aet[i]
@@ -564,14 +564,14 @@ function shapes.polyRowsAET(pts)
         for i = #aet, w, -1 do
             aet[i] = nil
         end
-        -- 2) 加入新边(当前行交点)
+        -- 2) Add new edges (intersections on the current row)
         while eidx <= #edges and edges[eidx].y0 <= tt do
             local e = edges[eidx]
             e.xcur = e.x0 + (tt - e.y0) * e.slope
             table.insert(aet, e)
             eidx = eidx + 1
         end
-        -- 3) 配对输出当前行区间
+        -- 3) Output the current row's intervals in pairs
         if #aet >= 2 then
             table.sort(aet, function(p, q) return p.xcur < q.xcur end)
             local list = {}
@@ -588,7 +588,7 @@ function shapes.polyRowsAET(pts)
                 rows[t] = list
             end
         end
-        -- 4) 活动边 x 推进到下一行(加入的边本轮已输出,不能再累加,否则交点超前一行)
+        -- 4) Advance active edge x to the next row (edges added this round were already output and must not be advanced again, or intersections run one row ahead)
         for i = 1, #aet do
             aet[i].xcur = aet[i].xcur + aet[i].slope
         end
@@ -596,17 +596,17 @@ function shapes.polyRowsAET(pts)
     return rows
 end
 
--- 半透明渲染代理:拦截 paintRect,把墨色按 alpha(0-1)真混合到目标 BB 现有像素上
--- (dest = α·墨色 + (1-α)·dest):白底上等于变浅,叠在墨迹上则透出下层(纯灰度做不到)。
--- shapes 全部原语只用 paintRect/getWidth/getHeight(见文件头),代理包装即对全部元素生效。
--- 坐标/裁剪/负偏移交给 real:paintRect 原生处理;混合走 setPixelBlend 逐像素 setter。
--- ponytail: 逐像素 Lua setter,整幅大填充约 0.1s 级(仅提交/重绘时一次);不够快再换 getPixelP 指针循环
--- 混合模式(灰度画布,ink=墨色灰度 0 黑~255 白,d=目标像素,a255=不透明度 0-255):
---   normal   直通 alpha: out = d + a·(ink-d)(原生 setPixelBlend,不读 dest)
---   multiply 正片叠底: out = (1-a)·d + a·ink·d/255 —— 墨与下层相乘,叠墨越叠越深
---   dodge    线性减淡: out = (1-a)·d + a·min(255, ink+d) —— 加色提亮,深墨近乎不变
--- multiply/dodge 必须读 dest,只能逐像素 Lua(blendModePixel);调用方须保证 bb 是
--- BB8 画布/区域临时 BB(_alphaBB 已做类型守卫,屏幕预览 BB 回退不透明/normal)
+-- Semi-transparent rendering proxy: intercepts paintRect and truly blends the ink colour by alpha (0-1) onto the target BB's existing pixels
+-- (dest = α·ink + (1-α)·dest): on white it simply lightens, over ink it lets the layer below show through (plain grey can't do this).
+-- All shapes primitives use only paintRect/getWidth/getHeight (see file header), so wrapping in the proxy works for every element.
+-- Coordinates/clipping/negative offsets are left to real:paintRect natively; blending uses the per-pixel setPixelBlend setter.
+-- ponytail: per-pixel Lua setter, a large full-canvas fill takes ~0.1s (only once on commit/redraw); switch to a getPixelP pointer loop if not fast enough
+-- Blend modes (greyscale canvas, ink = ink grey 0 black~255 white, d = destination pixel, a255 = opacity 0-255):
+--   normal   straight alpha: out = d + a·(ink-d) (native setPixelBlend, doesn't read dest)
+--   multiply multiply: out = (1-a)·d + a·ink·d/255 - ink multiplies with the layer below, getting darker as it stacks
+--   dodge    linear dodge: out = (1-a)·d + a·min(255, ink+d) - additive lightening, dark ink barely changes
+-- multiply/dodge must read dest, so they can only be per-pixel Lua (blendModePixel); callers must ensure bb is
+-- a BB8 canvas/region temp BB (_alphaBB already type-guards; the screen preview BB falls back to opaque/normal)
 function shapes.blendModePixel(bb, x, y, ink, a255, mode)
     local Blitbuffer = require("ffi/blitbuffer")
     local d = bb:getPixel(x, y).a
@@ -625,9 +625,9 @@ function shapes.blendModePixel(bb, x, y, ink, a255, mode)
     bb:setPixel(x, y, Blitbuffer.Color8(out))
 end
 
--- 混合模式快路(v63b):对固定 (ink, a255, mode),out 只依赖 dest 字节(0-255)
--- → 预计算 256 项查找表(uint8 数组),混合循环每像素零 FFI 函数调用。
--- 表达式与 blendModePixel 逐项一致(乘除顺序不变,浮点同点),有 256 全值断言
+-- Blend mode fast path (v63b): for fixed (ink, a255, mode), out depends only on the dest byte (0-255)
+-- -> precompute a 256-entry lookup table (uint8 array), so the blend loop makes zero FFI function calls per pixel.
+-- The expressions match blendModePixel term by term (same multiply/divide order, same floating-point points), with an assertion over all 256 values
 function shapes.buildBlendLUT(mode, ink, a255)
     local ffi = require("ffi")
     local lut = ffi.new("uint8_t[256]")
@@ -656,9 +656,9 @@ function shapes.buildBlendLUT(mode, ink, a255)
     return lut
 end
 
--- LUT 行混合:BB8(BlitBuffer8)像素 = Color8(1 字节)连续排布,cast 成 uint8_t*
--- 后 row[x] 直接数值读写,零 FFI 函数调用。
--- 调用方保证 real 为 BB8、rotation=0、inverse=0(见 drawFilledAlpha/alphaProxy 守卫)
+-- LUT row blend: BB8 (BlitBuffer8) pixels = Color8 (1 byte) laid out contiguously; cast to uint8_t*
+-- and then row[x] is read/written directly as a number, zero FFI function calls.
+-- Caller guarantees real is BB8, rotation=0, inverse=0 (see the drawFilledAlpha/alphaProxy guards)
 function shapes.blendRowLUT(real, x0, x1, y, lut)
     local ffi = require("ffi")
     local row = ffi.cast("uint8_t*", real.data) + real.stride * y
@@ -667,23 +667,23 @@ function shapes.blendRowLUT(real, x0, x1, y, lut)
     end
 end
 
--- 半透明渲染代理:拦截 paintRect,把墨色按 alpha(0-1)真混合到目标 BB 现有像素上
--- (dest = α·墨色 + (1-α)·dest):白底上等于变浅,叠在墨迹上则透出下层(纯灰度做不到)。
--- shapes 全部原语只用 paintRect/getWidth/getHeight(见文件头),代理包装即对全部元素生效。
--- 坐标/裁剪/负偏移交给 real:paintRect 原生处理;混合走 setPixelBlend 逐像素 setter。
--- mode(可省,默认 normal)= 透明度混合模式,见 blendModePixel;三模式全部走
--- BB8 指针行混合 + LUT(守卫 rotation/inverse,异常回退原生逐像素 setter)
--- ponytail: 快路每像素零 FFI 调用;慢路径(原生 setter)仅旋转/inverse 画布
+-- Semi-transparent rendering proxy: intercepts paintRect and truly blends the ink colour by alpha (0-1) onto the target BB's existing pixels
+-- (dest = α·ink + (1-α)·dest): on white it simply lightens, over ink it lets the layer below show through (plain grey can't do this).
+-- All shapes primitives use only paintRect/getWidth/getHeight (see file header), so wrapping in the proxy works for every element.
+-- Coordinates/clipping/negative offsets are left to real:paintRect natively; blending uses the per-pixel setPixelBlend setter.
+-- mode (optional, default normal) = opacity blend mode, see blendModePixel; all three modes use
+-- the BB8 pointer row blend + LUT (guarded on rotation/inverse, falling back to the native per-pixel setter in unusual cases)
+-- ponytail: the fast path makes zero FFI calls per pixel; the slow path (native setter) is only for rotated/inverse canvases
 function shapes.alphaProxy(real, alpha, mode)
     local Blitbuffer = require("ffi/blitbuffer")
     local a255 = math.max(0, math.min(255, math.floor(alpha * 255 + 0.5)))
     local blend_setter = real.setPixelBlend
-    -- 单槽 LUT 缓存:同一元素 ink 恒定,描边填按行 paintRect 不重复构造
+    -- Single-slot LUT cache: ink is constant within one element, so stroke fill's per-row paintRect doesn't rebuild it
     local lut, lut_ink
     return {
-        __dp_alpha = a255, -- 半透明标记(drawFilledAlpha 判定用,与 __dp_real 成对)
-        __dp_real = real, -- 半透明实心形状单次合成用
-        __dp_blend = mode or "normal", -- 混合模式(drawFilledAlpha/文字写回共用)
+        __dp_alpha = a255, -- semi-transparency marker (used by drawFilledAlpha, paired with __dp_real)
+        __dp_real = real, -- used for single-pass compositing of semi-transparent solid shapes
+        __dp_blend = mode or "normal", -- blend mode (shared by drawFilledAlpha/text write-back)
         getWidth = function() return real:getWidth() end,
         getHeight = function() return real:getHeight() end,
         paintRect = function(_, x, y, w, h, value)
@@ -694,7 +694,7 @@ function shapes.alphaProxy(real, alpha, mode)
                     lut = shapes.buildBlendLUT(mode, ink, a255)
                     lut_ink = ink
                 end
-                -- 手动裁剪(仿 getBoundedRect:BB8 自建画布无旋转,画布坐标恒等映射)
+                -- Manual clipping (mimics getBoundedRect: the self-built BB8 canvas has no rotation, canvas coordinates map identically)
                 local rw, rh = real:getWidth(), real:getHeight()
                 local X0, Y0 = x, y
                 local X1, Y1 = x + w - 1, y + h - 1
@@ -712,23 +712,23 @@ function shapes.alphaProxy(real, alpha, mode)
     }
 end
 
--- 按元素类型绘制(画布重放与屏幕预览共用);颜色由调用方传入,ox/oy 为整体偏移
+-- Draw by element type (shared by canvas replay and screen preview); colour is passed in by the caller, ox/oy is the overall offset
 
--- 半透明元素(rect/poly/circle 实心 + freehand/eraser/line 笔迹)单次合成(v62j/v62q):
--- 填充+描边直接画会多处交叠(描边压填充边界、四角描边带互叠+圆头笔帽小圆盘);
--- 笔迹则是逐 ~2px 小段混合,相邻段圆头大量重叠,重叠处 alpha 反复应用 → 笔迹比
--- 同 alpha 的路径填充(逐像素单次混合)明显更不透明。两者同一治法:整体画到临时 BB
--- (内部不透明覆盖,交叠无所谓),再逐像素对真画布一次性 alpha 混合 → 单一透明度。
--- ponytail: 每次重放 O(元素面积) Lua 像素循环;半透明大元素多到真机区域重放变卡时,
--- 再按元素缓存合成结果
+-- Single-pass compositing for semi-transparent elements (solid rect/poly/circle + freehand/eraser/line strokes) (v62j/v62q):
+-- drawing fill + outline directly overlaps in many places (outline over the fill boundary, corner outline strips overlapping + small round-cap discs);
+-- strokes blend in ~2px segments whose round caps overlap heavily, applying alpha repeatedly where they overlap -> strokes come out
+-- noticeably more opaque than a path fill of the same alpha (single per-pixel blend). Both get the same fix: draw everything into a temp BB
+-- (opaque overwrite inside, so overlaps don't matter), then alpha-blend it per pixel onto the real canvas in one pass -> a single opacity.
+-- ponytail: each replay is an O(element area) Lua pixel loop; if many large semi-transparent elements make region replays laggy on the real device,
+-- cache the composited result per element
 function shapes.drawFilledAlpha(bb, el, color, ox, oy)
     local Blitbuffer = require("ffi/blitbuffer")
     local real, a255 = bb.__dp_real, bb.__dp_alpha
     ox, oy = ox or 0, oy or 0
     local kind = el.kind
     local x0, y0, x1, y1
-    -- bbox 必须含 ox/oy:区域重放在"区域大小临时 BB"上用负偏移画,漏加会被
-    -- 钳制到错误范围 → 移动后半透明形状消失/显示不全
+    -- bbox must include ox/oy: region replay draws with a negative offset on a "region-sized temp BB"; leaving it out
+    -- clamps to the wrong range -> semi-transparent shapes disappear/are partially shown after a move
     if kind == "rect" then
         x0, x1 = math.min(el.x0, el.x1) + ox, math.max(el.x0, el.x1) + ox
         y0, y1 = math.min(el.y0, el.y1) + oy, math.max(el.y0, el.y1) + oy
@@ -737,8 +737,8 @@ function shapes.drawFilledAlpha(bb, el, color, ox, oy)
         y0, y1 = math.min(el.y0, el.y1) + oy, math.max(el.y0, el.y1) + oy
     elseif kind == "circle" then
         local rx, ry = el.rx or el.r, el.ry or el.rx or el.r
-        -- 旋转椭圆的轴对齐半宽/半高:√(rx²sin²+ry²cos²) / √(rx²cos²+ry²sin²)
-        -- (压缩后 rx≠ry,旋转 90° 时纵向投影可达 rx,只用 ry 会上下截断)
+        -- Axis-aligned half-width/half-height of a rotated ellipse: √(rx²sin²+ry²cos²) / √(rx²cos²+ry²sin²)
+        -- (after squashing rx≠ry, and at 90° rotation the vertical projection can reach rx; using only ry would clip top and bottom)
         local rot = el.rot or 0
         local cs, sn = math.cos(rot), math.sin(rot)
         local hw = math.sqrt(rx * rx * cs * cs + ry * ry * sn * sn)
@@ -754,10 +754,10 @@ function shapes.drawFilledAlpha(bb, el, color, ox, oy)
             if p.y + oy > y1 then y1 = p.y + oy end
         end
     end
-    -- 笔尖形状超出采样点的最大半径(单边,按 width 系数):circle/diamond=0.5;
-    -- square/triangle 底角=0.71;slash/backslash=对角 0.707w+条带 t/2(max(2,w/3))≈0.87。
-    -- 旧 pad(0.5w+2)对圆/菱形够用,大宽度斜线笔尖被 tmp 裁掉 → 笔迹四角被切
-    -- (任何非 100% 透明度都走 tmp 合成,与透明度数值无关)
+    -- Maximum radius of the brush tip shape beyond the sample point (one side, as a factor of width): circle/diamond=0.5;
+    -- square/triangle base corners=0.71; slash/backslash = diagonal 0.707w + strip t/2 (max(2,w/3)) ≈0.87.
+    -- The old pad (0.5w+2) was enough for circle/diamond, but wide slash tips got clipped by tmp -> stroke corners cut off
+    -- (any opacity other than 100% goes through tmp compositing, regardless of the opacity value)
     local TIP_PAD = { slash = 0.88, backslash = 0.88, square = 0.72, triangle = 0.72, triangle_inv = 0.72 }
     local pad = (el.width or 1) * (TIP_PAD[el.tip] or 0.5) + 2
     x0, y0 = math.floor(x0 - pad), math.floor(y0 - pad)
@@ -770,18 +770,18 @@ function shapes.drawFilledAlpha(bb, el, color, ox, oy)
     end
     local tmp = Blitbuffer.new(x1 - x0 + 1, y1 - y0 + 1, Blitbuffer.TYPE_BB8)
     tmp:fill(Blitbuffer.COLOR_WHITE)
-    -- tmp 是真 BB(无 __dp_alpha)→ 递归走不透明路径,交叠被不透明覆盖
+    -- tmp is a real BB (no __dp_alpha) -> recursion takes the opaque path, overlaps are overwritten opaquely
     shapes.drawElement(tmp, el, color, ox - x0, oy - y0)
     local ink = color:getColor8().a
-    -- 混合模式:随代理记录(per-element,区域重绘复现一致);三模式全部 LUT 化
-    -- (normal 公式同样只依赖 dest 字节,快路比原生 setPixelBlend setter 回调快 ~6x)
+    -- Blend mode: recorded with the proxy (per-element, region redraws reproduce it consistently); all three modes use LUTs
+    -- (the normal formula also depends only on the dest byte, so the fast path is ~6x faster than the native setPixelBlend setter callback)
     local mode = bb.__dp_blend or "normal"
     if real:getRotation() == 0 and real:getInverse() == 0 then
-        -- 快路(v63b/c):tmp 掩码与 dest 均为 BB8 字节布局,指针直读写 + 256 项 LUT,
-        -- 每像素零 FFI 调用——叠加多层后收笔区域重放 O(层数×面积) 的逐像素 Lua
-        -- 回调是卡顿主因(基线 8 层 400×400 相交重放 185ms → 快路后见 blend_bench)
+        -- Fast path (v63b/c): both the tmp mask and dest have BB8 byte layout, direct pointer read/write + 256-entry LUT,
+        -- zero FFI calls per pixel - after stacking many layers, the per-pixel Lua callbacks in the O(layers×area) pen-up region replay
+        -- were the main cause of stutter (baseline 8 layers 400×400 intersecting replay 185ms -> see blend_bench for the fast path)
         local lut = shapes.buildBlendLUT(mode, ink, a255)
-        -- BlitBuffer8.data 是 Color8*(1 字节 struct),cast uint8_t* 后数值读写
+        -- BlitBuffer8.data is Color8* (a 1-byte struct); after casting to uint8_t* it is read/written as numbers
         local ffi = require("ffi")
         local tbase = ffi.cast("uint8_t*", tmp.data)
         local rbase = ffi.cast("uint8_t*", real.data)
@@ -798,7 +798,7 @@ function shapes.drawFilledAlpha(bb, el, color, ox, oy)
         tmp:free()
         return
     end
-    -- 旋转/inverse 异常兜底:逐像素 setter(三模式)
+    -- Fallback for rotated/inverse cases: per-pixel setter (all three modes)
     local C8A, spb = Blitbuffer.Color8A, real.setPixelBlend
     for ty = 0, y1 - y0 do
         local sy = ty + y0
@@ -817,22 +817,22 @@ end
 
 function shapes.drawElement(bb, el, color, ox, oy)
     local kind = el.kind
-    -- v62j:半透明实心形状走单次合成(见 drawFilledAlpha;tmp 递归时 bb 是真 BB 不进此分支)
+    -- v62j: semi-transparent solid shapes use single-pass compositing (see drawFilledAlpha; during tmp recursion bb is a real BB and doesn't enter this branch)
     if el.filled and (kind == "rect" or kind == "poly" or kind == "circle")
         and type(bb) == "table" and bb.__dp_real and bb.__dp_alpha and bb.__dp_alpha < 255 then
         return shapes.drawFilledAlpha(bb, el, color, ox, oy)
     end
-    -- v62q:半透明笔迹(freehand/eraser/line)同样单次合成——逐段混合在段间圆头重叠处
-    -- 反复应用 alpha,笔迹比同 alpha 的路径填充明显更不透明
+    -- v62q: semi-transparent strokes (freehand/eraser/line) are also composited in a single pass - per-segment blending repeatedly applies alpha
+    -- where round caps overlap between segments, making strokes noticeably more opaque than a path fill of the same alpha
     if (kind == "freehand" or kind == "eraser" or kind == "line")
         and type(bb) == "table" and bb.__dp_real and bb.__dp_alpha and bb.__dp_alpha < 255 then
         return shapes.drawFilledAlpha(bb, el, color, ox, oy)
     end
     if kind == "fill" then
-        -- 洪泛填充结果:逐行 span 复写(区域重绘/撤销重放精确还原)。
-        -- 直接遍历 span:不同行的 span 互不影响(同行的多段互不重叠),不用按行聚表
-        -- 再排序 —— 旧版每行建一个小表 + 排序,整幅背景填(上千行)每次重放上千次
-        -- 分配;元素一多、每次落笔提交都重放一次,真机上就是"笔画多了刷新变慢"
+        -- Flood-fill result: rewrite span by span per row (region redraw/undo replay restores it exactly).
+        -- Iterate the spans directly: spans on different rows don't affect each other (segments on the same row don't overlap), so no need to group by row
+        -- and sort - the old version built a small table per row + sorted, so a full background fill (thousands of rows) did thousands of
+        -- allocations per replay; with many elements and a replay on every stroke commit, on the real device that meant "refresh slows down as strokes pile up"
         ox = ox or 0
         oy = oy or 0
         local bw, bh = bb:getWidth(), bb:getHeight()
@@ -853,11 +853,11 @@ function shapes.drawElement(bb, el, color, ox, oy)
     elseif kind == "freehand" or kind == "eraser" then
         shapes.polyline(bb, el.points, el.width, color, ox, oy, el.tip)
     elseif kind == "poly" then
-        -- 多边形(旋转后的矩形):实心先扫描线填充(v61k:不再退化为空心)再闭合描边
+        -- Polygon (rotated rectangle): solid ones are scanline-filled first (v61k: no longer degrade to hollow), then the closed outline is drawn
         local pts = el.points
         local n = #pts
-        -- v62i:半透明实心 = 填充按线宽一半内缩,否则描边叠在填充上双重混合(alpha 两次
-        -- 应用 ≈ 1-(1-a)²)显出深色轮廓;内缩后 填充与描边带相接不重叠。不透明照旧
+        -- v62i: semi-transparent solid = fill inset by half the line width, otherwise the outline stacked on the fill double-blends (alpha applied twice
+        -- ≈ 1-(1-a)²) and shows a dark outline; after the inset the fill and outline strip meet without overlapping. Opaque is unchanged
         local inset = 0
         if el.filled and type(bb) == "table" and bb.__dp_alpha and bb.__dp_alpha < 255 and n >= 4 then
             inset = math.floor(el.width / 2 + 0.5)
@@ -865,7 +865,7 @@ function shapes.drawElement(bb, el, color, ox, oy)
         if el.filled and n >= 3 then
             local poly = {}
             if inset > 0 then
-                -- 每个顶点沿两条相邻边方向各内缩 inset(矩形内偏移的逐顶点公式)
+                -- Inset each vertex by inset along both adjacent edge directions (per-vertex formula for offsetting a rectangle inward)
                 for i, p in ipairs(pts) do
                     local prev, nxt = pts[i == 1 and n or i - 1], pts[i == n and 1 or i + 1]
                     local u1x, u1y = norm2(prev.x - p.x, prev.y - p.y)
@@ -906,7 +906,7 @@ function shapes.drawElement(bb, el, color, ox, oy)
             el.x1 + (ox or 0), el.y1 + (oy or 0), el.width, color, el.tip)
     elseif kind == "rect" then
         if el.filled then
-            -- v62i:半透明填充内缩线宽一半(见 poly 分支注释),不透明照旧铺满
+            -- v62i: semi-transparent fill inset by half the line width (see the poly branch comment), opaque still fills completely
             local x0 = el.x0 + (ox or 0)
             local y0 = el.y0 + (oy or 0)
             local x1 = el.x1 + (ox or 0)
@@ -921,11 +921,11 @@ function shapes.drawElement(bb, el, color, ox, oy)
         shapes.rect(bb, el.x0 + (ox or 0), el.y0 + (oy or 0),
             el.x1 + (ox or 0), el.y1 + (oy or 0), el.width, color, el.tip)
     elseif kind == "circle" then
-        -- 圆/椭圆:rx/ry 支持非等比缩放成椭圆,rot 支持旋转(实心旋转椭圆扫描线填充)
+        -- Circle/ellipse: rx/ry support non-uniform scaling into an ellipse, rot supports rotation (solid rotated ellipses are scanline-filled)
         local rx, ry = el.rx or el.r, el.ry or el.rx or el.r
         local rot = el.rot or 0
         if el.filled then
-            -- v62i:半透明填充半径内缩线宽一半,与描边环带相接不重叠
+            -- v62i: semi-transparent fill radius inset by half the line width, meeting the outline annulus without overlapping
             local inset = (type(bb) == "table" and bb.__dp_alpha and bb.__dp_alpha < 255) and math.floor(el.width / 2 + 0.5) or 0
             local irx, iry = rx - inset, ry - inset
             if irx > 0 and iry > 0 then

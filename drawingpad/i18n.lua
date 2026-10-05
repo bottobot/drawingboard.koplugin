@@ -1,18 +1,18 @@
 --[[--
-drawingpad.i18n — 双语菜单(v62n,对齐 plugin_manager.koplugin 的实现方法)。
-**英文为源语言**:代码里字符串一律英文,中文经 dict(英文→中文)查表。
-语言解析 L.resolve(pref):menu_lang 设置("en"/"zh")优先;缺省 auto =
-gettext.current_lang 以 zh 开头 → 中文,否则英文。必须在任何 UI 构造前调用
-(drawing_canvas:init 里),t()/x() 运行时按当前语言取值。
-- t(en, zh):成对直译(复合/动态串),zh 缺省回退 en。
-- x(en):查字典 dict[en],查不到原样返回(单串、集中维护)。
+drawingpad.i18n - bilingual menus (v62n, following the implementation approach of plugin_manager.koplugin).
+**English is the source language**: strings in code are always English; Chinese is looked up via dict (English -> Chinese).
+Language resolution L.resolve(pref): the menu_lang setting ("en"/"zh") takes priority; default auto =
+Chinese if gettext.current_lang starts with zh, otherwise English. Must be called before any UI construction
+(in drawing_canvas:init); t()/x() pick values by the current language at runtime.
+- t(en, zh): paired literal translation (compound/dynamic strings); zh falls back to en when missing.
+- x(en): dictionary lookup dict[en]; returns the input unchanged if not found (single strings, maintained centrally).
 --]]
 
 local M = {
     lang = "en",
-    -- 中文对照表(key = 英文原文;与 plugin_manager 的 LANG_TABLE 同套路)
+    -- Chinese lookup table (key = original English text; same approach as plugin_manager's LANG_TABLE)
     dict = {
-        -- 分类面板条目(静态 label)
+        -- Category panel items (static labels)
         ["Tool"] = "工具",
         ["Options"] = "属性设置",
         ["Layer"] = "图层",
@@ -41,7 +41,7 @@ local M = {
         ["Update"] = "更新",
         ["Insert"] = "插入",
         ["root folder"] = "根目录",
-        -- 弹窗标题
+        -- Popup titles
         ["Gray"] = "灰度",
         ["Width"] = "粗细",
         ["Opacity"] = "透明度",
@@ -75,7 +75,7 @@ local M = {
         ["Filename(auto .drawing)"] = "文件名(自动补 .drawing)",
         ["Folder: root"] = "文件夹: 根目录",
         ["Folder: "] = "文件夹: ",
-        -- 设置弹窗按钮
+        -- Settings popup buttons
         ["Max"] = "最大",
         ["Min"] = "最小",
         ["Thick"] = "最粗",
@@ -86,7 +86,7 @@ local M = {
         ["Fixed:%s"] = "固定:%s",
         ["Max:"] = "最大:",
         ["Min:"] = "最小:",
-        -- 笔触菜单(const.TIPS 显示名)
+        -- Brush tip menu (const.TIPS display names)
         ["Ellipse"] = "圆形",
         ["Square"] = "方形",
         ["Triangle"] = "正三角",
@@ -94,7 +94,7 @@ local M = {
         ["Diamond"] = "菱形",
         ["Slash"] = "斜线",
         ["Backslash"] = "反斜线",
-        -- 状态栏缩写(const.TIP_NAMES)
+        -- Status bar abbreviations (const.TIP_NAMES)
         ["O"] = "圆",
         ["S"] = "方",
         ["T"] = "三",
@@ -102,11 +102,11 @@ local M = {
         ["D"] = "菱",
         ["/"] = "斜",
         ["\\"] = "反",
-        -- 状态栏图层(const.LAYER_NAMES)
+        -- Status bar layers (const.LAYER_NAMES)
         ["bottom"] = "下层",
         ["middle"] = "中层",
         ["top"] = "上层",
-        -- Toast/确认
+        -- Toast/confirmation
         ["Clear this layer? Cannot be undone."] = "确定清空当前图层?此操作不可撤销。",
         ["Canvas is empty, nothing to save."] = "画板是空的,没有内容可保存。",
         ["Filename cannot contain / or \\"] = "文件名不能含 / 或 \\ 字符",
@@ -121,7 +121,7 @@ local M = {
         ["No usable font found (fonts folder)."] = "未找到可用字体(fonts 目录)。",
         ["Tip menu failed to open"] = "笔触菜单打开失败",
         ["Tip menu render failed"] = "笔触菜单渲染失败",
-        -- 关于/语言切换
+        -- About/language switch
         ["drawingboard"] = "绘图板",
         ["Version:"] = "软件版本:",
         ["Author:"] = "作者:",
@@ -135,10 +135,10 @@ local M = {
     },
 }
 
--- 成对直译(复合/动态串):源语言英文
--- v62u:auto 模式(menu_lang 未手动选过)每次调用重新检测——KOReader 语言
--- 可在会话中切换(gettext 即时生效),插件若只在 init 时解析一次会一直留在旧语言
-local detect_is_chinese -- 前置声明(定义在下方,M.t/M.x 运行时引用)
+-- Paired literal translation (compound/dynamic strings): source language is English
+-- v62u: in auto mode (menu_lang never chosen manually) re-detect on every call - KOReader's language
+-- can change mid-session (gettext takes effect immediately); if the plugin resolved only once at init it would stay on the old language
+local detect_is_chinese -- forward declaration (defined below, referenced by M.t/M.x at runtime)
 function M.t(en, zh)
     if M.pref == nil then
         M.lang = detect_is_chinese() and "zh" or "en"
@@ -149,7 +149,7 @@ function M.t(en, zh)
     return en
 end
 
--- 查字典(单串)
+-- Dictionary lookup (single string)
 function M.x(en)
     if M.pref == nil then
         M.lang = detect_is_chinese() and "zh" or "en"
@@ -163,11 +163,11 @@ function M.x(en)
     return en
 end
 
--- 语言检测(对齐 plugin_manager.koplugin:模块加载期按 gettext.current_lang 判定)
+-- Language detection (aligned with plugin_manager.koplugin: decided by gettext.current_lang at module load time)
 --   local current_lang = gettext.current_lang or ""
 --   local is_chinese = current_lang:match("^zh") and true or false
--- 差异:current_lang 为空/"C"(POSIX 未设置,常见于测试环境)时回退
--- G_reader_settings 的 language(用户真实选择),仍非 zh 才用英文
+-- Difference: when current_lang is empty/"C" (POSIX unset, common in test environments), fall back to
+-- G_reader_settings' language (the user's real choice); English only if that still isn't zh
 function detect_is_chinese()
     local ok, current_lang = pcall(function()
         local gettext = require("gettext")
@@ -187,7 +187,7 @@ end
 
 M.lang = detect_is_chinese() and "zh" or "en"
 
--- 解析语言:pref = "en"/"zh"(关于弹窗手动切换)覆盖并锁定;nil = auto(每次取串时跟随系统语言)
+-- Resolve language: pref = "en"/"zh" (manual switch in the About popup) overrides and locks; nil = auto (follows the system language on every string lookup)
 function M.resolve(pref)
     M.pref = (pref == "en" or pref == "zh") and pref or nil
     if pref == "en" or pref == "zh" then
