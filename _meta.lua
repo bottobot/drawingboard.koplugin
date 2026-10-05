@@ -1,6 +1,6 @@
--- 插件元数据:名称/描述按系统语言双语——系统语言非中文显示英文,中文系统显示中文
--- (与 drawingpad/i18n.lua 的菜单规则一致;这里不 require 任何模块,保证 pluginmanager
---  任何加载时机都能用,直接读全局 G_reader_settings)
+-- Plugin metadata: name/description are bilingual by system language - English for non-Chinese systems, Chinese on Chinese systems
+-- (same rule as the menus in drawingpad/i18n.lua; nothing is required here so that pluginmanager
+--  can use it at any load time; reads the global G_reader_settings directly)
 local function is_zh()
     local ok, lang = pcall(function()
         return G_reader_settings and G_reader_settings:readSetting("language") or nil

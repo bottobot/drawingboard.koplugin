@@ -1,11 +1,11 @@
 --[[--
-drawingpad.tools — 工具状态与切换方法(DrawingCanvas 混合模块)。
+drawingpad.tools - tool state and switching methods (DrawingCanvas mixin module).
 --]]
 
 local M = {}
 
--- 切工具:清理进行中状态/选中/挂起任务,同步按钮标签与状态栏。
--- 点"文字"工具时若选择工具下选中了文字对象 → 弹属性修改菜单(内容/字体/字号),不切工具
+-- Switch tool: clear in-progress state/selection/pending tasks, sync button labels and status bar.
+-- Tapping the "Text" tool while a text object is selected with the select tool -> open the property menu (content/font/size) instead of switching tools
 function M:_setTool(tool)
     if tool == "text" and self._selected and self._selected.kind == "text" then
         self:_editSelectedText()
@@ -28,9 +28,9 @@ function M:_setTool(tool)
     self:_updateStatus()
 end
 
--- v61p 清理:旧"长按画笔切直线"(_toggleBrushLine)已无入口,v59b 起画笔/直线为独立条目
+-- v61p cleanup: the old "long-press brush to toggle line" (_toggleBrushLine) has no entry point; since v59b brush/line are separate items
 
--- 长按矩形/圆形:切换实心/空心
+-- Long-press rectangle/circle: toggle filled/outline
 function M:_toggleFilled(shape)
     if shape == "rect" then
         self.rect_filled = not self.rect_filled
@@ -38,11 +38,11 @@ function M:_toggleFilled(shape)
         self.circle_filled = not self.circle_filled
     end
     self:_log("filled", shape, self.rect_filled, self.circle_filled)
-    self:_syncToolLabels() -- 角标 ▾/▴ 随模式翻转
+    self:_syncToolLabels() -- corner mark ▾/▴ flips with the mode
     self:_updateStatus()
 end
 
--- 长按橡皮:切换画笔删(轨迹) / 框选删(框选)
+-- Long-press eraser: toggle stroke erase (along the path) / box erase (marquee)
 function M:_toggleEraserMode()
     self.eraser_mode = (self.eraser_mode == "rect") and "brush" or "rect"
     self:_log("eraser_mode ->", self.eraser_mode)
@@ -50,7 +50,7 @@ function M:_toggleEraserMode()
     self:_updateStatus()
 end
 
--- 长按填充:切换 点填(点封闭区域单色填充)/ 描边填(画笔描边,闭合起点落点填内部)
+-- Long-press fill: toggle tap fill (solid fill of the tapped enclosed area) / stroke fill (brush outline, closes start to end and fills the interior)
 function M:_toggleFillMode()
     self.fill_mode = (self.fill_mode == "path") and "tap" or "path"
     self:_log("fill_mode ->", self.fill_mode)
@@ -58,7 +58,7 @@ function M:_toggleFillMode()
     self:_updateStatus()
 end
 
--- 长按灰度:切换 固定/随机 模式(随机:每次落笔从 [min,max] 均分 N 级随机取)
+-- Long-press grey: toggle fixed/random mode (random: each stroke picks randomly from N evenly spaced levels in [min,max])
 function M:_toggleGrayRandom()
     self.gray_random = not self.gray_random
     self:_log("gray_random ->", self.gray_random)
@@ -66,7 +66,7 @@ function M:_toggleGrayRandom()
     self:_updateStatus()
 end
 
--- 长按粗细:切换 固定/随机 模式
+-- Long-press width: toggle fixed/random mode
 function M:_toggleWidthRandom()
     self.width_random = not self.width_random
     self:_log("width_random ->", self.width_random)
@@ -74,7 +74,7 @@ function M:_toggleWidthRandom()
     self:_updateStatus()
 end
 
--- 从 [vmin,vmax] 均分 levels 级随机取一个值(levels=2 只出两端;vmax<=vmin 退化返回 vmin)
+-- Pick a random value from levels evenly spaced steps in [vmin,vmax] (levels=2 gives only the endpoints; vmax<=vmin degenerates to vmin)
 function M:_randomLeveled(vmin, vmax, levels)
     levels = math.max(2, math.floor(levels or 8))
     if vmax <= vmin then
@@ -84,7 +84,7 @@ function M:_randomLeveled(vmin, vmax, levels)
     return vmin + (vmax - vmin) * (i - 1) / (levels - 1)
 end
 
--- 解析下次落笔灰度:固定模式返回当前值,随机模式从分级中随机取
+-- Resolve grey for the next stroke: fixed mode returns the current value, random mode picks a random level
 function M:_resolveGray()
     if not self.gray_random then
         return self.gray
@@ -92,7 +92,7 @@ function M:_resolveGray()
     return self:_randomLeveled(self.gray_min, self.gray_max, self.gray_levels)
 end
 
--- 解析下次落笔粗细:固定模式返回当前值,随机模式从分级中随机取
+-- Resolve width for the next stroke: fixed mode returns the current value, random mode picks a random level
 function M:_resolveWidth()
     if not self.width_random then
         return self.width
@@ -100,7 +100,7 @@ function M:_resolveWidth()
     return self:_randomLeveled(self.width_min, self.width_max, self.width_levels)
 end
 
--- 长按透明度:切换 固定/随机 模式(随机:每次落笔从 [min,max] 均分 N 级随机取)
+-- Long-press opacity: toggle fixed/random mode (random: each stroke picks randomly from N evenly spaced levels in [min,max])
 function M:_toggleAlphaRandom()
     self.alpha_random = not self.alpha_random
     self:_log("alpha_random ->", self.alpha_random)
@@ -108,7 +108,7 @@ function M:_toggleAlphaRandom()
     self:_updateStatus()
 end
 
--- 解析下次落笔透明度(0-1,1=不透明):固定模式返回当前值,随机模式从分级中随机取
+-- Resolve opacity for the next stroke (0-1, 1=opaque): fixed mode returns the current value, random mode picks a random level
 function M:_resolveAlpha()
     if not self.alpha_random then
         return self.alpha

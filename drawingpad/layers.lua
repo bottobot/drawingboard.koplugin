@@ -1,13 +1,13 @@
 --[[--
-drawingpad.layers — 图层(3 层,每层独立)方法(DrawingCanvas 混合模块)。
+drawingpad.layers - layer methods (3 layers, each independent) (DrawingCanvas mixin module).
 
-v62d:模块侧显隐乒乓缓存(不改核心文件——真机核心是回滚版,不能动)。
-本模块定义 _applyVisibilityToggle/_visibleMask/_invalidateVisCache(真机回滚版核心没有,
-开发树新版核心有同名方法、逻辑一致;模块合并晚于核心 → 两边都被本模块版本覆盖生效)。
-画布内容变动时的缓存作废由核心的 _redrawRegion/_renderAll 直接调用
-(设备补丁版核心已加;开发树核心本就有),本模块只提供缓存本体。
-显隐切换由此恢复 v61x 的速度(交替显隐第 2 次起零重绘,代价是多持有一整幅画布 BB,
-PW3 约 1.5MB,关闭画板时释放;若设备内存吃紧,删掉本文件"乒乓缓存"一节即回到重放路径)。
+v62d: module-side visibility ping-pong cache (core file untouched - the real device runs a rolled-back core that must not be changed).
+This module defines _applyVisibilityToggle/_visibleMask/_invalidateVisCache (the rolled-back core on the device lacks them;
+the newer core in the dev tree has same-named methods with identical logic; modules merge after the core -> this module's version wins on both).
+Cache invalidation when canvas content changes is called directly by the core's _redrawRegion/_renderAll
+(already added to the patched device core; the dev-tree core always had it); this module only provides the cache itself.
+This restores v61x speed for visibility toggles (alternating toggles redraw nothing from the 2nd time on, at the cost of holding one extra full-canvas BB,
+about 1.5MB on PW3, freed when the board closes; if device memory is tight, delete the "ping-pong cache" section of this file to fall back to the replay path).
 --]]
 
 local UIManager = require("ui/uimanager")
@@ -15,7 +15,7 @@ local Blitbuffer = require("ffi/blitbuffer")
 
 local M = {}
 
--- 切到指定层(1..3):重绑 元素/撤销/重做 引用,清理进行中状态与选中。
+-- Switch to the given layer (1..3): rebind element/undo/redo references, clear in-progress state and selection.
 function M:_switchLayer(n)
     n = ((n - 1) % 3) + 1
     if n == self.active_layer then
@@ -42,17 +42,17 @@ function M:_switchLayer(n)
     UIManager:setDirty(self, "full")
 end
 
--- 长按图层:切换当前层 显示/隐藏(隐藏层不渲染、不导出 PNG)
+-- Long-press layer: toggle the current layer shown/hidden (hidden layers are not rendered and not exported to PNG)
 function M:_toggleLayerVisible()
     self.layer_visible[self.active_layer] = not self.layer_visible[self.active_layer]
     self:_log("layer visible", self.active_layer, self.layer_visible[self.active_layer])
-    self:_syncToolLabels() -- 角标 ▾/▴ 随显隐翻转
+    self:_syncToolLabels() -- corner mark ▾/▴ flips with visibility
     self:_updateStatus()
-    -- 乒乓缓存:目标状态有缓存画面则整幅交换(零重绘),否则重放一次并缓存旧状态
+    -- Ping-pong cache: if the target state has a cached image, swap the whole buffer (zero redraw); otherwise replay once and cache the old state
     self:_refreshAfterVisibilityToggle()
 end
 
--- 图层面板(v59d):切换任意层的显隐(当前层走 _toggleLayerVisible;其他层直接翻标记)
+-- Layer panel (v59d): toggle visibility of any layer (current layer goes through _toggleLayerVisible; other layers just flip the flag)
 function M:_toggleLayerVisibleOf(n)
     if self.active_layer == n then
         return self:_toggleLayerVisible()
@@ -63,10 +63,10 @@ function M:_toggleLayerVisibleOf(n)
     self:_refreshAfterVisibilityToggle()
 end
 
--- 显隐落地刷新。乒乓缓存(v61w 起)只是"整幅交换缓冲"的加速,不是功能本体——
--- 真机上曾把带缓存的核心文件回滚成旧版(缺 _applyVisibilityToggle),而这两个调用点
--- 还在,于是长按图层整个失效(错误被 wrapHandler 吞掉,只留一行日志)。
--- 这里按能力探测:本模块已提供 _applyVisibilityToggle(见文件头),两个版本的核心都能用
+-- Visibility change screen refresh. The ping-pong cache (since v61w) is only a "whole-buffer swap" speedup, not the feature itself -
+-- the real device once had its core file rolled back to an old cache-less version (missing _applyVisibilityToggle) while these two call sites
+-- remained, so long-press layer broke entirely (the error was swallowed by wrapHandler, leaving only one log line).
+-- So probe by capability here: this module provides _applyVisibilityToggle (see file header), so both core versions work
 function M:_refreshAfterVisibilityToggle()
     if self._applyVisibilityToggle then
         self:_applyVisibilityToggle()
@@ -75,9 +75,9 @@ function M:_refreshAfterVisibilityToggle()
     end
 end
 
--- ============================ 显隐乒乓缓存(模块侧,v62d) ============================
+-- ============================ Visibility ping-pong cache (module side, v62d) ============================
 
--- 可见层掩码(1=下,2=中,4=上)
+-- Visible-layer mask (1=bottom, 2=middle, 4=top)
 function M:_visibleMask()
     local mask = 0
     for li = 1, 3 do
@@ -88,7 +88,7 @@ function M:_visibleMask()
     return mask
 end
 
--- 显隐乒乓缓存作废(元素内容变动/关闭画板时调用;nil 安全,旧核心随手可调)
+-- Invalidate the visibility ping-pong cache (called on element content changes/board close; nil-safe, old cores can call it freely)
 function M:_invalidateVisCache()
     if self._vis_cache then
         if self._vis_cache.bb and self._vis_cache.bb.free then
@@ -98,9 +98,9 @@ function M:_invalidateVisCache()
     end
 end
 
--- 图层显隐切换:目标状态有缓存画面则整幅交换缓冲(零重绘),否则重放一次、
--- 旧状态画布留作缓存——交替显隐(对比图层)第 2 次起全部命中。
--- 画布尺寸不符(理论只在换屏/重建后)或无缓存时退化为一次普通重放
+-- Layer visibility toggle: if the target state has a cached image, swap the whole buffer (zero redraw); otherwise replay once
+-- and keep the old-state canvas as cache - alternating toggles (comparing layers) all hit from the 2nd time on.
+-- Falls back to one plain replay when the canvas size mismatches (in theory only after a screen change/rebuild) or there is no cache
 function M:_applyVisibilityToggle()
     local new_mask = self:_visibleMask()
     local old_mask = self._canvas_mask or new_mask
@@ -125,11 +125,11 @@ function M:_applyVisibilityToggle()
     UIManager:setDirty(self, "full")
 end
 
--- ============================ 图层面板:当前层透明度 ============================
+-- ============================ Layer panel: current-layer opacity ============================
 
--- 图层面板"当前层透明度"(0-100%,100=不透明):滑条+预设档位。
--- showValuePicker 拖动中不触发 onchange(释放/预设/点按才应用),每次应用整幅重放
--- (层系数影响整层全部元素,走 _renderAll 而非显隐乒乓——缓存画面带旧透明度,必须作废)
+-- Layer panel "current layer opacity" (0-100%, 100=opaque): slider + preset steps.
+-- showValuePicker does not fire onchange while dragging (applies only on release/preset/tap); each apply does a full replay
+-- (the layer factor affects every element in the layer, so use _renderAll rather than the visibility ping-pong - the cached image has the old opacity and must be invalidated)
 function M:_pickLayerAlpha()
     local n = self.active_layer
     local cur = (self.layer_alpha and self.layer_alpha[n]) or 1
@@ -142,11 +142,11 @@ function M:_pickLayerAlpha()
         onchange = function(v)
             self.layer_alpha[n] = v / 100
             self:_renderAll()
-            -- 整层灰度值变化,partial 会留残影,补一次 "ui" 全幅匀平
+            -- Whole-layer grey values changed; partial would leave ghosting, so add one full-screen "ui" refresh to even it out
             UIManager:setDirty(self, "ui")
         end,
         onclose = function()
-            self:_syncToolLabels() -- 面板条目文本带当前值,改完即刷
+            self:_syncToolLabels() -- panel item text includes the current value; refresh right after the change
             self:_log("layer alpha", n, self.layer_alpha[n])
         end,
     }

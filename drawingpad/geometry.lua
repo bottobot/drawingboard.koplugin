@@ -1,16 +1,16 @@
 --[[--
-drawingpad.geometry — 几何计算与变换方法(DrawingCanvas 混合模块)。
-纯坐标/区域/包围盒计算与元素几何变换,不依赖具体 UI 状态之外的对象。
-文字包围盒按实际渲染尺寸计算(RenderText:sizeUtf8Text),锚点框完整覆盖文字,
-移动/变形不再留残影。
+drawingpad.geometry - geometry calculation and transform methods (DrawingCanvas mixin module).
+Pure coordinate/region/bounding-box calculations and element geometry transforms, with no dependencies beyond UI state.
+Text bounding boxes use the actual rendered size (RenderText:sizeUtf8Text), so the handle frame fully covers the text
+and moves/transforms no longer leave ghosting.
 --]]
 
 local Font = require("ui/font")
 local Geom = require("ui/geometry")
 local RenderText = require("ui/rendertext")
 
--- 自定位:同目录短名 shapes/const 可解析(v53+ pluginloader 注入 <插件目录>/?.lua,
--- 短模式已够用;v57 去掉父目录双模式,wbuilder 路径在 wbuilder.lua 顶部单独注入)
+-- Self-locate: same-directory short names shapes/const resolve (since v53 pluginloader injects <plugin dir>/?.lua,
+-- so the short pattern is enough; v57 dropped the parent-directory dual pattern, the wbuilder path is injected separately at the top of wbuilder.lua)
 local __source = debug.getinfo(1, "S").source
 local __self_dir = __source:match("^@(.*)[/\\][^/\\]*$") or "."
 if not package.path:find(__self_dir, 1, true) then
@@ -20,8 +20,8 @@ local shapes = require("shapes")
 
 local M = {}
 
--- 屏幕坐标 → 画布坐标(画布坐标 = 屏幕坐标,保证最小化切换无位移);
--- 可见模式下底部(工具栏+状态栏)遮挡区不可画
+-- Screen coordinates -> canvas coordinates (canvas coordinates = screen coordinates, so toggling minimise causes no shift);
+-- in visible mode the occluded strip at the bottom (toolbar + status bar) is not drawable
 function M:_toCanvas(px, py)
     if px < 0 or py < 0 or px >= self.canvas_w or py >= self.canvas_h then
         return nil
@@ -32,7 +32,7 @@ function M:_toCanvas(px, py)
     return px, py
 end
 
--- 笔画/预览包围盒刷新区域(屏幕坐标=画布坐标,含边距;返回 Geom 或 nil)
+-- Stroke/preview bounding-box refresh region (screen coordinates = canvas coordinates, with margin; returns a Geom or nil)
 function M:_dirtyRegion(x0, y0, x1, y1, margin)
     margin = margin or 2
     local rx0 = math.max(0, math.floor(math.min(x0, x1)) - margin)
@@ -45,9 +45,9 @@ function M:_dirtyRegion(x0, y0, x1, y1, margin)
     return Geom:new{ x = rx0, y = ry0, w = rx1 - rx0, h = ry1 - ry0 }
 end
 
--- 元素包围盒(画布坐标);返回 {x0,y0,x1,y1} 或 nil
--- 文字渲染尺寸(含 sx/sy 拉伸):返回 {w, yt, yb, baseline} 或 nil(face 缺失)。
--- 包围盒/选取框/墨迹距离/绘制共用,保证各处一致的"拉伸后"尺寸
+-- Element bounding box (canvas coordinates); returns {x0,y0,x1,y1} or nil
+-- Text render size (including sx/sy stretch): returns {w, yt, yb, baseline} or nil (face missing).
+-- Shared by bounding box/selection frame/ink distance/drawing, so the "stretched" size is consistent everywhere
 function M:_textExtent(el)
     local face = Font:getFace(el.font, el.size)
     local s = face and RenderText:sizeUtf8Text(0, nil, face, el.text, false, false)
@@ -71,7 +71,7 @@ function M:_elementBBox(el)
         if y1 > maxy then maxy = y1 end
     end
     if el.kind == "circle" then
-        -- 圆/椭圆(含旋转)的外接轴对齐包围盒
+        -- Axis-aligned bounding box enclosing a circle/ellipse (including rotated)
         local rx, ry = el.rx or el.r, el.ry or el.rx or el.r
         local rot = el.rot or 0
         if rot == 0 then
@@ -90,7 +90,7 @@ function M:_elementBBox(el)
             add(p.x - el.width, p.y - el.width, p.x + el.width, p.y + el.width)
         end
     elseif el.kind == "fill" then
-        -- 洪泛填充结果:span 列表 {y, x0, x1} 的包围盒
+        -- Flood-fill result: bounding box of the span list {y, x0, x1}
         for _, sp in ipairs(el.spans) do
             add(sp[2], sp[1], sp[3], sp[1])
         end
@@ -98,18 +98,18 @@ function M:_elementBBox(el)
         if not el.text or not el.size then
             return nil
         end
-        -- 优先按实际渲染尺寸算包围盒(锚点框完整覆盖文字,移动不残影);
-        -- 字体缺失时回退字符数估算
+        -- Prefer the actual rendered size for the bounding box (handle frame fully covers the text, no ghosting on move);
+        -- fall back to a character-count estimate when the font is missing
         local nchars = select(2, el.text:gsub("[^\128-\191]", ""))
         local e = self:_textExtent(el)
         if e then
             local ax = el.x or 0
-            local ay = e.baseline -- 旋转中心 = 基线(与 _drawTextTo/_frameCorners 同锚点)
+            local ay = e.baseline -- rotation centre = baseline (same anchor as _drawTextTo/_frameCorners)
             local rot = el.rot or 0
             if rot == 0 then
                 add(ax - 1, e.baseline - e.yt - 1, ax + e.w + 1, e.baseline + e.yb + 1)
             else
-                -- 旋转:4 个角绕锚点(基线左端)旋转后取外接框
+                -- Rotated: rotate the 4 corners about the anchor (left end of the baseline) and take the enclosing box
                 local c, sn = math.cos(rot), math.sin(rot)
                 local function radd(px, py)
                     local dx, dy = px - ax, py - ay
@@ -131,15 +131,15 @@ function M:_elementBBox(el)
     return { x0 = minx, y0 = miny, x1 = maxx, y1 = maxy }
 end
 
--- 元素提交时缓存包围盒(元素一经提交不可变,缓存无失效问题)。
--- 点删预过滤/框删/保存裁剪/局部重绘都走缓存,不再每次扫描全部点表
+-- Cache the bounding box when an element is committed (committed elements are immutable, so the cache never goes stale).
+-- Tap-delete prefiltering/box delete/save cropping/partial redraw all use the cache instead of scanning every point list each time
 function M:_cacheBBox(el)
     el._bbox = self:_elementBBox(el)
     return el._bbox
 end
 
--- 元素完整刷新区域:圆以锚点为圆心、半径=拖动距离,会超出"锚点-释放点"包围盒,
--- 必须按元素实际范围(圆心±半径/对角线±线宽)计算,否则屏幕刷新不全、圆缺块
+-- Full element refresh region: a circle is centred on the anchor with radius = drag distance, so it exceeds the "anchor-release point" box;
+-- it must be computed from the element's actual extent (centre ± radius / diagonal ± line width), otherwise the screen refresh is incomplete and the circle has missing chunks
 function M:_elementRegion(el, extra)
     extra = extra or 2
     local margin = (el.width or 2) + extra
@@ -157,7 +157,7 @@ function M:_elementRegion(el, extra)
     return Geom:new{ x = rx0, y = ry0, w = rx1 - rx0, h = ry1 - ry0 }
 end
 
--- 合并两个刷新区域
+-- Merge two refresh regions
 function M:_mergeRegions(a, b)
     if not a then
         return b
@@ -172,8 +172,8 @@ function M:_mergeRegions(a, b)
     return Geom:new{ x = x0, y = y0, w = x1 - x0, h = y1 - y0 }
 end
 
--- 元素内容包围盒(用于导出裁剪);返回 {x,y,w,h} 或 nil(无内容)
--- 走提交时缓存的 bbox:不再逐笔画扫描全部点表
+-- Element content bounding box (for export cropping); returns {x,y,w,h} or nil (no content)
+-- Uses the bbox cached at commit: no longer scans every stroke's point list
 function M:_contentBBox()
     local minx, miny, maxx, maxy = math.huge, math.huge, -1, -1
     local function add(x0, y0, x1, y1)
@@ -206,7 +206,7 @@ function M:_contentBBox()
     return { x = x0, y = y0, w = x1 - x0 + 1, h = y1 - y0 + 1 }
 end
 
--- 平移元素坐标(各 kind 坐标字段;平移后需重算 bbox 缓存)
+-- Translate element coordinates (per-kind coordinate fields; the bbox cache must be recomputed after translating)
 function M:_moveElement(el, dx, dy)
     if el.kind == "freehand" or el.kind == "eraser" or el.kind == "poly" then
         for _, p in ipairs(el.points) do
@@ -222,8 +222,8 @@ function M:_moveElement(el, dx, dy)
         el.x = (el.x or 0) + dx
         el.y = (el.y or 0) + dy
     elseif el.kind == "fill" then
-        -- 填充结果:平移 span 列表(每行 y/x0/x1);源顶点同步平移,
-        -- 否则移动后再旋转会按旧顶点重算、填充跳回原位
+        -- Fill result: translate the span list (y/x0/x1 per row); also translate the source vertices,
+        -- otherwise rotating after a move recomputes from the old vertices and the fill jumps back
         if el.src_points then
             for _, p in ipairs(el.src_points) do
                 p.x = p.x + dx
@@ -238,7 +238,7 @@ function M:_moveElement(el, dx, dy)
     end
 end
 
--- 复制元素(freehand 点表/spans 深拷贝;_bbox 不复制,提交时重算)
+-- Clone an element (deep copy of freehand point lists/spans; _bbox not copied, recomputed on commit)
 function M:_cloneElement(el)
     local c = {}
     for k, v in pairs(el) do
@@ -249,7 +249,7 @@ function M:_cloneElement(el)
             end
             c[k] = pts
         elseif k == "spans" then
-            -- fill 的 span 列表深拷贝(移动/复制副本独立,不共享像素行)
+            -- Deep copy of the fill's span list (moved/copied duplicates are independent, no shared pixel rows)
             local sps = {}
             for i, sp in ipairs(v) do
                 sps[i] = { sp[1], sp[2], sp[3] }
@@ -262,7 +262,7 @@ function M:_cloneElement(el)
     return c
 end
 
--- 用几何快照恢复元素(撤销/重做变形用;points 深拷贝,避免快照被后续修改污染)
+-- Restore an element from a geometry snapshot (for transform undo/redo; points deep-copied so later edits can't pollute the snapshot)
 function M:_restoreGeom(el, snap)
     for k in pairs(el) do
         if k ~= "_bbox" then
@@ -282,7 +282,7 @@ function M:_restoreGeom(el, snap)
     end
 end
 
--- 按锚点与新位置计算新包围盒(对角/单轴固定;最小尺寸 4px)
+-- Compute the new bounding box from the handle and new position (opposite corner/single axis fixed; minimum size 4px)
 function M:_transformBBox(handle, sb, x, y)
     local min_size = 4
     local x0, y0, x1, y1 = sb.x0, sb.y0, sb.x1, sb.y1
@@ -306,9 +306,9 @@ function M:_transformBBox(handle, sb, x, y)
     return sb
 end
 
--- 缩放元素几何:起始包围盒 → 新包围盒 双线性映射坐标
--- (文字缩放 = 位置映射 + 均匀部分进字号(保清晰)+ 残余非均匀进 sx/sy 像素缩放;
--- 圆/椭圆 = 中心映射 + rx/ry 各轴因子 → 椭圆)
+-- Scale element geometry: bilinear coordinate mapping from the start bounding box -> new bounding box
+-- (text scaling = position mapping + the uniform part goes into font size (stays sharp) + the remaining non-uniform part into sx/sy pixel scaling;
+-- circle/ellipse = centre mapping + per-axis factors for rx/ry -> ellipse)
 function M:_scaleElement(el, sb, nb)
     local sx = (nb.x1 - nb.x0) / math.max(1, sb.x1 - sb.x0)
     local sy = (nb.y1 - nb.y0) / math.max(1, sb.y1 - sb.y0)
@@ -326,12 +326,12 @@ function M:_scaleElement(el, sb, nb)
         el.x0, el.y0 = map(el.x0, el.y0)
         el.x1, el.y1 = map(el.x1, el.y1)
     elseif el.kind == "circle" then
-        -- 圆/椭圆:中心映射,rx/ry 按各轴因子缩放(非等比 → 椭圆)
+        -- Circle/ellipse: map the centre, scale rx/ry by per-axis factors (non-uniform -> ellipse)
         el.cx, el.cy = map(el.cx, el.cy)
         el.rx = math.max(1, (el.rx or el.r) * sx)
         el.ry = math.max(1, (el.ry or el.rx or el.r) * sy)
     elseif el.kind == "text" then
-        -- 均匀部分进字号(字形清晰),残余非均匀进 sx/sy(渲染时像素缩放成拉伸字形)
+        -- Uniform part goes into font size (sharp glyphs), the remaining non-uniform part into sx/sy (pixel-scaled into stretched glyphs at render time)
         local f = (sx + sy) / 2
         el.x, el.y = map(el.x, el.y)
         el.size = math.max(1, math.floor(el.size * f + 0.5))
@@ -339,9 +339,9 @@ function M:_scaleElement(el, sb, nb)
         el.sx = (el.sx or 1) * (sx / denom)
         el.sy = (el.sy or 1) * (sy / denom)
     elseif el.kind == "fill" then
-        -- 有源顶点的路径填充:直接对顶点做同一双线性映射后重算 spans,
-        -- 与首次生成同一条扫描线代码;每次变换都从连续几何出发,无累积量化。
-        -- (无 src_points 的 tap 洪水填充/旧存档无几何可依,维持 span 映射)
+        -- Path fill with source vertices: apply the same bilinear mapping directly to the vertices and recompute spans,
+        -- using the same scanline code as the initial generation; every transform starts from continuous geometry, no cumulative quantisation.
+        -- (tap flood fills/old saves without src_points have no geometry to work from, so they keep span mapping)
         if el.src_points then
             for _, p in ipairs(el.src_points) do
                 p.x, p.y = map(p.x, p.y)
@@ -349,11 +349,11 @@ function M:_scaleElement(el, sb, nb)
             el.spans = self:_polygonFillSpans(el.src_points)
             return
         end
-        -- 填充结果:按新 bbox 缩放 span 列表。
-        -- 拉大(sy>1)时源行不能只映射到单个目标行——相邻源行的目标行之间会留空行,
-        -- 形成密集横纹;改为按源行纵向半行范围 [y-0.5, y+0.5] 映射后的目标行带铺满,
-        -- 相邻源行的带在边界相接/重叠,行集连续。缩小(sy<1)保持逐行映射,
-        -- 多源行并进同一目标行,由下方合并逻辑处理。
+        -- Fill result: scale the span list to the new bbox.
+        -- When enlarging (sy>1) a source row can't map to just one target row - gaps would be left between the target rows of adjacent source rows,
+        -- forming dense horizontal stripes; instead map the source row's vertical half-row range [y-0.5, y+0.5] and fill the resulting band of target rows,
+        -- so bands of adjacent source rows meet/overlap at their boundaries and the row set is continuous. Shrinking (sy<1) keeps row-by-row mapping,
+        -- with several source rows merging into one target row, handled by the merge logic below.
         local new_spans = {}
         local rows = {}
         local ylo, yhi
@@ -397,16 +397,16 @@ function M:_scaleElement(el, sb, nb)
             end
         end
         el.spans = new_spans
-        -- 变形后标记为栅格化填充:重放时补 1px 重叠，避免取整白线
+        -- Mark as a rasterised fill after transform: replay adds a 1px overlap to avoid white lines from rounding
         el._rasterized = true
     end
 end
 
--- 按对象自身旋转外接框(OBB)做角锚缩放:拖 OBB 角到 (x,y),对角固定,
--- 沿 OBB 两轴分别求缩放因子并应用。
--- 旋转对象(椭圆 rot≠0/poly/文字 rot≠0)的缩放锚点在 OBB 角上、位于 AABB 内部,
--- 若仍用 AABB 的 _transformBBox/_scaleElement,向外拖 OBB 角释放点也超不过 AABB,
--- 对象只能缩小无法拉大。非旋转形状(锚在 AABB 角上)返回 false 走旧路径。
+-- Corner-handle scaling along the object's own rotated bounding box (OBB): drag an OBB corner to (x,y) with the opposite corner fixed,
+-- computing and applying scale factors separately along the two OBB axes.
+-- For rotated objects (ellipse rot≠0/poly/text rot≠0) the scale handles sit on OBB corners, inside the AABB;
+-- with the AABB _transformBBox/_scaleElement, dragging an OBB corner outward can't release beyond the AABB,
+-- so the object could only shrink, never grow. Non-rotated shapes (handles on AABB corners) return false and take the old path.
 function M:_scaleElementOriented(el, handle, x, y)
     local F, ux, uy, vx, vy
     if el.kind == "circle" then
@@ -463,13 +463,13 @@ function M:_scaleElementOriented(el, handle, x, y)
     else
         return false
     end
-    -- 拖角索引与固定对角(对角固定:nw↔se, ne↔sw)
+    -- Dragged corner index and fixed opposite corner (opposite fixed: nw↔se, ne↔sw)
     local i = handle == "nw" and 1 or handle == "ne" and 2
         or handle == "se" and 3 or handle == "sw" and 4 or 3
     local j = ((i + 1) % 4) + 1
     local pj = F[j]
     local pi = F[i]
-    -- 对角向量在 OBB 两轴上的投影与拖到 (x,y) 的投影
+    -- Projection of the diagonal vector on the two OBB axes and the projection of the drag to (x,y)
     local d_ux = (pi[1] - pj[1]) * ux + (pi[2] - pj[2]) * uy
     local d_vx = (pi[1] - pj[1]) * vx + (pi[2] - pj[2]) * vy
     if math.abs(d_ux) < 0.001 or math.abs(d_vx) < 0.001 then
@@ -481,7 +481,7 @@ function M:_scaleElementOriented(el, handle, x, y)
         local rx, ry = el.rx or el.r, el.ry or el.rx or el.r
         el.rx = math.max(1, rx * fu)
         el.ry = math.max(1, ry * fv)
-        -- 中心移到对角固定的中点: C' = Pj + (d'u/2)u + (d'v/2)v
+        -- Move the centre to the midpoint with the opposite corner fixed: C' = Pj + (d'u/2)u + (d'v/2)v
         el.cx = pj[1] + ((x - pj[1]) * ux + (y - pj[2]) * uy) / 2 * ux
             + ((x - pj[1]) * vx + (y - pj[2]) * vy) / 2 * vx
         el.cy = pj[2] + ((x - pj[1]) * ux + (y - pj[2]) * uy) / 2 * uy
@@ -494,13 +494,13 @@ function M:_scaleElementOriented(el, handle, x, y)
             p.y = pj[2] + a * fu * uy + b * fv * vy
         end
     elseif el.kind == "text" then
-        -- 均匀部分进字号(字形清晰),残余非均匀进 sx/sy(与 _scaleElement 同套路)
+        -- Uniform part goes into font size (sharp glyphs), the remaining non-uniform part into sx/sy (same approach as _scaleElement)
         local f = (fu + fv) / 2
         el.size = math.max(1, math.floor(el.size * f + 0.5))
         local denom = math.max(0.0001, f)
         el.sx = (el.sx or 1) * (fu / denom)
         el.sy = (el.sy or 1) * (fv / denom)
-        -- 锚点(基线左端)相对固定角在 OBB 两轴上的偏移按因子缩放
+        -- Scale the anchor's (left end of the baseline) offset from the fixed corner along the two OBB axes by the factors
         local ax, ay = el.x or 0, el.y or 0
         local a_ux = (ax - pj[1]) * ux + (ay - pj[2]) * uy
         local a_vx = (ax - pj[1]) * vx + (ay - pj[2]) * vy
@@ -510,9 +510,9 @@ function M:_scaleElementOriented(el, handle, x, y)
     return true
 end
 
--- 旋转元素几何:绕 (cx,cy) 旋转 angle 弧度。
--- 矩形旋转 → 转为 poly(4 个旋转角点,闭合描边;实心退化为描边)
--- 椭圆旋转 → 记录 rot(渲染时绕中心旋转采样点)
+-- Rotate element geometry: rotate by angle radians about (cx,cy).
+-- Rotating a rectangle -> converts to poly (4 rotated corner points, closed outline; filled degrades to outline)
+-- Rotating an ellipse -> records rot (sample points are rotated about the centre at render time)
 function M:_rotateElement(el, angle, cx, cy)
     local cos, sin = math.cos(angle), math.sin(angle)
     local function rot(px, py)
@@ -529,8 +529,8 @@ function M:_rotateElement(el, angle, cx, cy)
     elseif el.kind == "circle" then
         el.rot = (el.rot or 0) + angle
     elseif el.kind == "text" then
-        -- 文字旋转:累积角度 + 锚点(基线左端)绕旋转中心同步旋转
-        -- (锚点+角度同步 = 刚性旋转一致,渲染绕锚点按 el.rot 旋转)
+        -- Text rotation: accumulate the angle + rotate the anchor (left end of the baseline) about the rotation centre in step
+        -- (anchor + angle in step = consistent rigid rotation; rendering rotates about the anchor by el.rot)
         el.rot = (el.rot or 0) + angle
         el.x, el.y = rot(el.x or 0, el.y or 0)
     elseif el.kind == "rect" then
@@ -545,12 +545,12 @@ function M:_rotateElement(el, angle, cx, cy)
         end
         el.kind = "poly"
         el.points = pts
-        -- 保留 filled：旋转后的实心矩形仍应保持实心
+        -- Keep filled: a rotated filled rectangle should stay filled
     elseif el.kind == "fill" then
-        -- 有源顶点的路径填充:顶点精确旋转后用首次生成同一条扫描线
-        -- (_polygonFillSpans,半开区间+像素中心取整)重算 spans。
-        -- 每次变换都从连续几何出发,不像 span 反建路径那样逐次向外漂移
-        -- (棘轮:±0.5 外扩+顶点行覆盖 → 旋转多次后穿模细线)。
+        -- Path fill with source vertices: rotate the vertices exactly, then recompute spans with the same scanline as the initial generation
+        -- (_polygonFillSpans, half-open intervals + pixel-centre rounding).
+        -- Every transform starts from continuous geometry, unlike rebuilding a path from spans, which drifts outward each time
+        -- (ratchet: ±0.5 outward growth + vertex row coverage -> thin lines poke through after several rotations).
         if el.src_points then
             for _, p in ipairs(el.src_points) do
                 p.x, p.y = rot(p.x, p.y)
@@ -558,21 +558,21 @@ function M:_rotateElement(el, angle, cx, cy)
             el.spans = self:_polygonFillSpans(el.src_points)
             return
         end
-        -- 无 src_points(tap 洪水填充/旧存档):只能从量化 span 反建几何。
-        -- 每个 span 是半行厚矩形 [x0-0.5,x1+0.5]×[y-0.5,y+0.5]。
-        -- 快路径(每行单段且行连续):重建区域轮廓(顶点=行边界点)旋转后走活动边表扫描,
-        -- 每行只处理常数条活动边,大 fill 拖拽旋转预览每帧重算不卡;
-        -- 慢路径(多段/断行):相邻同宽 span 垂直合并成矩形块逐块旋转扫描(结果一致)。
-        -- 相邻块的共享边界旋转后仍共享,行间无缝隙;同目标行区间合并重叠/相邻段。
-        -- 结果烧录进 spans(无 rot 字段)。
+        -- No src_points (tap flood fill/old saves): geometry can only be rebuilt from quantised spans.
+        -- Each span is a half-row-thick rectangle [x0-0.5,x1+0.5]×[y-0.5,y+0.5].
+        -- Fast path (one segment per row and contiguous rows): rebuild the region outline (vertices = row boundary points), rotate, and scan with an active edge table,
+        -- handling only a constant number of active edges per row, so recomputing large fills every frame of a drag-rotate preview doesn't stutter;
+        -- slow path (multiple segments/broken rows): merge vertically adjacent equal-width spans into rectangular blocks and rotate/scan block by block (same result).
+        -- Shared boundaries of adjacent blocks remain shared after rotation, so no gaps between rows; overlapping/adjacent segments in the same target row are merged.
+        -- The result is baked into spans (no rot field).
         local sorted = {}
         for _, sp in ipairs(el.spans) do
             table.insert(sorted, sp)
         end
         table.sort(sorted, function(a, b) return a[1] < b[1] end)
         local rows = {}
-        -- 变形后的路径填充禁止锯齿轮廓快路径：逐行轮廓在旋转后容易自交，
-        -- 产生脱离边界的密集线条；慢路径按相邻矩形块重栅格化更稳。
+        -- Transformed path fills skip the jagged-outline fast path: per-row outlines easily self-intersect after rotation,
+        -- producing dense lines detached from the boundary; the slow path re-rasterising adjacent rectangular blocks is more robust.
         local single = (not el._rasterized) and #sorted >= 2
         if single then
             for i = 2, #sorted do
@@ -584,7 +584,7 @@ function M:_rotateElement(el, angle, cx, cy)
             end
         end
         if single then
-            -- 区域轮廓:顶边 → 右锯齿 → 底边 → 左锯齿(闭合),旋转后 AET 扫描
+            -- Region outline: top edge -> right jagged edge -> bottom edge -> left jagged edge (closed), AET scan after rotation
             local n = #sorted
             local ymin, ymax = sorted[1][1], sorted[n][1]
             local pts = {}
@@ -605,7 +605,7 @@ function M:_rotateElement(el, angle, cx, cy)
             end
             rows = shapes.polyRowsAET(pts)
         else
-            -- 多段/断行:同宽相邻行合并成矩形块,逐块旋转后扫描线栅格化
+            -- Multiple segments/broken rows: merge equal-width adjacent rows into rectangular blocks, rotate each block and scanline-rasterise
             local blocks = {}
             for _, sp in ipairs(sorted) do
                 local y, x0, x1 = sp[1], sp[2], sp[3]
@@ -655,7 +655,7 @@ function M:_rotateElement(el, angle, cx, cy)
             end
         end
         el.spans = new_spans
-        -- 变形后标记为栅格化填充:重放时做 1px 边界重叠,消除取整缝隙
+        -- Mark as a rasterised fill after transform: replay applies a 1px boundary overlap to remove rounding gaps
         el._rasterized = true
     end
 end

@@ -1,12 +1,12 @@
 --[[--
-drawingpad.strokes — 画笔/橡皮/图形工具与刷新节流方法(DrawingCanvas 混合模块)。
+drawingpad.strokes - brush/eraser/shape tool and refresh throttling methods (DrawingCanvas mixin module).
 --]]
 
--- 自定位:把本文件所在目录加入 package.path,使 require("shapes") 与目录无关
+-- Self-locate: add this file's directory to package.path so require("shapes") works regardless of directory
 local __source = debug.getinfo(1, "S").source
 local __self_dir = __source:match("^@(.*)[/\\][^/\\]*$") or "."
 if not package.path:find(__self_dir, 1, true) then
-    -- 同目录短名(shapes/const)与父目录 drawingpad.* 前缀皆可解析,与 drawingpad 所在位置无关
+    -- Both same-directory short names (shapes/const) and the parent-directory drawingpad.* prefix resolve, regardless of where drawingpad lives
     package.path = __self_dir .. "/?.lua;" .. package.path
 end
 local shapes = require("shapes")
@@ -17,10 +17,10 @@ local const = require("drawingpad.const")
 
 local M = {}
 
--- 作废所有挂起的定时任务(关闭/切工具/最小化/清空时调用)。
--- scheduleIn 返回 nil 取不到句柄,但 UIManager:unschedule 按闭包引用取消,
--- 这里对保存下来的同一个闭包调用 unschedule 即真正从任务队列移除,
--- 杜绝"关闭后僵尸定时器仍触发"的隐患
+-- Invalidate all pending scheduled tasks (called on close/tool switch/minimise/clear).
+-- scheduleIn returns nil so there is no handle, but UIManager:unschedule cancels by closure reference;
+-- calling unschedule here on the same saved closure really removes it from the task queue,
+-- eliminating the hazard of "zombie timers still firing after close"
 function M:_invalidateTasks()
     if self._stroke_repaint_fn then
         UIManager:unschedule(self._stroke_repaint_fn)
@@ -43,13 +43,13 @@ function M:_invalidateTasks()
     self._drag_preview_region = nil
     self._stroke_repaint_pending = false
     self._stroke_region = nil
-    self:_freeAlphaStrokeSnap() -- 半透明笔画被中止时释放快照(下次落笔会重取)
+    self:_freeAlphaStrokeSnap() -- free the snapshot when a semi-transparent stroke is aborted (the next stroke takes a new one)
 end
 
--- 增量样条渲染:消费 points 里尚未渲染的段(_seg 计数),画法与 shapes.polyline
--- 逐段一致(Catmull-Rom 过点插值)。段 P_k→P_{k+1} 需要邻点 P_{k-1}/P_{k+2} 定切向,
--- 故滞后一点渲染(末段由 _renderStrokeClose 收笔时补齐),
--- 保证实时笔迹与撤销/保存重绘完全相同。返回本次绘制内容的包围盒(无则 nil)。
+-- Incremental spline rendering: consume the segments in points not yet rendered (_seg count), drawn the same way as shapes.polyline
+-- segment for segment (Catmull-Rom interpolation through points). Segment P_k→P_{k+1} needs neighbours P_{k-1}/P_{k+2} for its tangents,
+-- so rendering lags one point behind (the last segment is completed by _renderStrokeClose on pen-up),
+-- guaranteeing the live stroke is identical to the undo/save redraw. Returns the bounding box of what was drawn this time (nil if nothing).
 function M:_renderStrokeTail(s)
     s = s or self._stroke
     if not s then return nil end
@@ -57,15 +57,15 @@ function M:_renderStrokeTail(s)
     local n = #pts
     if n == 0 then return nil end
     local gray = Blitbuffer.gray(s.gray)
-    -- v62s:半透明笔迹实时以**不透明**灰度直接增量画进画布(与不透明笔同一条几何快路,
-    -- 计算量最小;用户选定方案"不透明灰度预览,收笔刷新再修正")。逐段混合(段间圆头
-    -- 重叠反复应用 alpha)和整笔重放(平方增长)都废弃;收笔时 live_alpha 分支整笔
-    -- 区域重放一次,把不透明预览修正成均匀半透明。
-    -- 豁免 fill 工具无意义了:fill 描边同样走不透明预览,提交时本就整区重放擦掉
+    -- v62s: semi-transparent strokes are drawn live as **opaque** grey straight into the canvas incrementally (the same fast geometry path as opaque strokes,
+    -- least computation; the user's chosen approach "opaque grey preview, corrected by the pen-up refresh"). Per-segment blending (round caps
+    -- overlapping between segments apply alpha repeatedly) and whole-stroke replay (quadratic growth) are both abandoned; on pen-up the live_alpha branch
+    -- replays the whole stroke's region once, correcting the opaque preview into an even semi-transparency.
+    -- Exempting the fill tool no longer makes sense: the fill outline also uses the opaque preview, and the commit already replays the whole region to erase it
     local pbb = self:_alphaBB(self.canvas_bb, s)
     if type(pbb) == "table" and pbb.__dp_alpha and pbb.__dp_alpha < 255 then
         pbb = self.canvas_bb
-        -- v62v:落笔前快照(只取一次)——收笔快路恢复快照+整笔单次合成
+        -- v62v: pre-stroke snapshot (taken only once) - the pen-up fast path restores the snapshot + composites the whole stroke in a single pass
         if not s._alpha_snap_done then
             s._alpha_snap_done = true
             self:_takeAlphaStrokeSnap()
@@ -73,20 +73,20 @@ function M:_renderStrokeTail(s)
     end
     local minx, miny, maxx, maxy
     if not s._tip_drawn then
-        -- 起点全宽笔触(按下即见;起笔即全宽,起笔处的小圆弧清晰可见)。
-        -- 它的范围也计入返回值:调用方靠这个包围盒并入 _stroke_region —— 只画了起笔
-        -- 圆点、还没到能渲染线段(需右邻点)的那次调用曾返回 nil,于是"起笔立即刷新"
-        -- 那发 setDirty(partial, nil) = 整屏刷新 = 快速起笔闪屏(慢起笔走 onHold,
-        -- 有 `if rx0 then` 守卫,所以不闪)
+        -- Full-width start-point tip (visible on touch-down; full width from pen-down, so small arcs at the start are clearly visible).
+        -- Its extent is also included in the return value: callers merge this bounding box into _stroke_region - the call that only drew the start
+        -- dot and couldn't render a segment yet (needs the right neighbour) used to return nil, so the "refresh immediately on pen-down"
+        -- setDirty(partial, nil) = full-screen refresh = flash on fast pen-down (slow pen-down goes through onHold,
+        -- which has an `if rx0 then` guard, so no flash)
         s._tip_drawn = true
         shapes.tip(pbb, pts[1].x, pts[1].y, s.width, gray, s.tip)
         minx, maxx = pts[1].x, pts[1].x
         miny, maxy = pts[1].y, pts[1].y
     end
-    -- 段 P_k→P_{k+1} 的右邻点是 P_{k+2}:仅当 k ≤ n-2 可渲染,
-    -- 即循环条件 s._seg + 3 ≤ n(末段留给 _renderStrokeClose)
+    -- Segment P_k→P_{k+1} has right neighbour P_{k+2}: renderable only when k ≤ n-2,
+    -- i.e. the loop condition s._seg + 3 ≤ n (the last segment is left to _renderStrokeClose)
     while (s._seg or 0) + 3 <= n do
-        local k = (s._seg or 0) + 1 -- 渲染段 P_k→P_{k+1}
+        local k = (s._seg or 0) + 1 -- render segment P_k→P_{k+1}
         local p0 = pts[math.max(1, k - 1)]
         local p1, p2, p3 = pts[k], pts[k + 1], pts[k + 2]
         if pbb then
@@ -104,8 +104,8 @@ function M:_renderStrokeTail(s)
     return nil
 end
 
--- 收尾补段:剩余末段 P_{n-1}→P_n(末侧邻位钳到末点,与 shapes.polyline 一致);
--- 只在已有增量渲染时调用。返回包围盒。
+-- Finishing segment: the remaining last segment P_{n-1}→P_n (end-side neighbour clamped to the last point, same as shapes.polyline);
+-- only called when incremental rendering has already happened. Returns the bounding box.
 function M:_renderStrokeClose(s)
     s = s or self._stroke
     if not s or not s._tip_drawn then return nil end
@@ -114,7 +114,7 @@ function M:_renderStrokeClose(s)
     if n < 2 then return nil end
     local gray = Blitbuffer.gray(s.gray)
     local pbb = self:_alphaBB(self.canvas_bb, s)
-    -- v62s:半透明实时以不透明灰度预览(同 _renderStrokeTail)
+    -- v62s: semi-transparent live preview in opaque grey (same as _renderStrokeTail)
     if type(pbb) == "table" and pbb.__dp_alpha and pbb.__dp_alpha < 255 then
         pbb = self.canvas_bb
     end
@@ -136,7 +136,7 @@ function M:_renderStrokeClose(s)
     return nil
 end
 
--- 追加一个点并增量绘制新线段(直接进画布 BB,收笔前属于"进行中"笔画)
+-- Append a point and incrementally draw the new segment (straight into the canvas BB; it belongs to the "in-progress" stroke until pen-up)
 function M:_extendStroke(x, y)
     local s = self._stroke
     if not s then
@@ -145,13 +145,13 @@ function M:_extendStroke(x, y)
     local pts = s.points
     local last = pts[#pts]
     if last and last.x == x and last.y == y then
-        return -- 去重
+        return -- dedup
     end
-    -- 慢笔画会产生大量 1px 内的密集点:按笔宽比例设最小步距,步距内跳过。
-    -- 步距封顶 3px:更粗的笔也不再跳过密集点,小圆弧的曲率不因抽稀被拉直
-    -- (单笔内存仍有 MAX_STROKE_POINTS 收笔均匀抽稀兜底)。
-    -- 圆头/粗线在步距内的墨迹完全重叠,视觉无差异,但单笔点数量级下降,
-    -- 长会话的内存与橡皮/保存扫描成本都显著收敛
+    -- Slow strokes produce many dense points within 1px: set a minimum step proportional to brush width and skip points within it.
+    -- Step capped at 3px: thicker brushes no longer skip dense points either, so small arcs don't get straightened by thinning
+    -- (per-stroke memory still has the MAX_STROKE_POINTS even thinning on pen-up as a backstop).
+    -- Ink from round/thick tips within the step overlaps completely, so there's no visual difference, but per-stroke point counts drop by an order of magnitude,
+    -- and long-session memory and eraser/save scan costs converge significantly
     local min_step = math.min(3, math.max(1, math.floor(s.width / 8)))
     if last and math.abs(last.x - x) < min_step and math.abs(last.y - y) < min_step then
         return
@@ -161,16 +161,16 @@ function M:_extendStroke(x, y)
     if not rx0 then
         return
     end
-    -- 节流刷新:数据实时进画布,屏幕按窗口合并区域刷新(墨水屏不逐事件刷新,防卡顿);
-    -- 粗笔画用更宽的节流窗口,减少波形刷新次数
+    -- Throttled refresh: data goes into the canvas live, the screen refreshes merged regions per window (e-ink doesn't refresh per event, prevents stutter);
+    -- thick strokes use a wider throttle window to cut waveform refreshes
     self._stroke_region = self:_mergeRegions(self._stroke_region,
         self:_dirtyRegion(rx0, ry0, rx1, ry1, s.width + 2))
     if not self._stroke_repaint_pending then
         self._stroke_repaint_pending = true
         local interval = (s.width >= const.THICK_WIDTH)
             and const.THICK_REFRESH_INTERVAL or const.STROKE_REFRESH_INTERVAL
-        -- 存闭包引用:scheduleIn 返回 nil 取不到句柄,unschedule 按闭包引用取消,
-        -- 关闭/切工具时靠 _invalidateTasks 里对同一闭包 unschedule 作废任务
+        -- Store the closure reference: scheduleIn returns nil so there is no handle, unschedule cancels by closure reference,
+        -- and on close/tool switch _invalidateTasks unschedules the same closure to invalidate the task
         local fn = function()
             self:_flushStrokeRepaint()
         end
@@ -179,14 +179,14 @@ function M:_extendStroke(x, y)
     end
 end
 
--- 节流窗口到点:合并区域刷新(命名方法以便关闭时取消/统一 pcall 保护)。
--- 起笔立即刷新路径也调用这里:顺带取消已排队的节流任务,避免队列堆积。
--- 没有累积区域时**不发刷新**:setDirty(partial, nil) 在 KOReader 里等于整屏刷新
--- (还会按次数升级成 full 闪刷),墨水屏上就是一次闪屏;而"没区域"的含义正是
--- "这一笔还没有墨迹需要显示"(墨迹已在 canvas_bb 里,等下一发节流或收笔那发带
--- 区域的一起上屏),所以直接跳过是等价且更省的
--- 半透明整笔包围盒区域(擦净重放用):单次合成画的是整支笔,擦净区域必须同样
--- 覆盖整笔——只擦"本轮新段"会让旧前缀在每次 flush 上反复叠加 alpha(矩形阶梯马赛克)
+-- Throttle window fired: refresh the merged region (named method so it can be cancelled on close/uniformly pcall-protected).
+-- The refresh-immediately-on-pen-down path also calls this: it cancels any already queued throttle task, avoiding a queue backlog.
+-- With no accumulated region **no refresh is sent**: setDirty(partial, nil) in KOReader is a full-screen refresh
+-- (and gets upgraded to a flashing full refresh by count), which is a flash on e-ink; and "no region" means exactly
+-- "this stroke has no ink to show yet" (the ink is already in canvas_bb and goes on screen with the next throttled refresh or the pen-up one
+-- that carries a region), so skipping is equivalent and cheaper
+-- Whole-stroke bounding region for semi-transparent strokes (for wipe-and-replay): single-pass compositing draws the whole stroke, so the wiped region must
+-- cover the whole stroke as well - wiping only "this round's new segments" makes the old prefix stack alpha again on every flush (a rectangular staircase mosaic)
 function M:_strokeRegion(s)
     local minx, miny, maxx, maxy = math.huge, math.huge, -math.huge, -math.huge
     for _, p in ipairs(s.points) do
@@ -201,10 +201,10 @@ function M:_strokeRegion(s)
     return self:_dirtyRegion(minx, miny, maxx, maxy, (s.width or 1) + 2)
 end
 
--- 半透明笔画落笔前画布快照(v62v):收笔用"恢复快照 + 整笔单次合成"替代
--- _redrawRegion 全元素重放——重放要把区域内所有元素(含整幅背景填)重画一遍,
--- 元素一多收笔就明显卡;快照恢复后画布即落笔前状态,只需合成这一笔本身。
--- 代价 = 每笔一次整幅拷贝(毫秒级),远小于大区域重放
+-- Pre-stroke canvas snapshot for semi-transparent strokes (v62v): pen-up uses "restore snapshot + single-pass composite of the whole stroke" instead of
+-- a full-element _redrawRegion replay - the replay redraws every element in the region (including full-canvas background fills),
+-- so pen-up stutters noticeably with many elements; after restoring the snapshot the canvas is in its pre-stroke state, and only this stroke needs compositing.
+-- Cost = one full-canvas copy per stroke (milliseconds), far less than a large region replay
 function M:_takeAlphaStrokeSnap()
     self:_freeAlphaStrokeSnap()
     local snap = Blitbuffer.new(self.canvas_w, self.canvas_h, self.canvas_bb:getType())
@@ -226,20 +226,20 @@ function M:_flushStrokeRepaint()
     end
     self._stroke_repaint_pending = false
     if not self.canvas_bb then
-        return -- 关闭后挂起的回调:直接丢弃,不触碰已释放状态
+        return -- callback still pending after close: just discard it, don't touch freed state
     end
     local reg = self._stroke_region
     self._stroke_region = nil
     if not reg then
         return
     end
-    -- v62s:半透明实时的不透明预览无需节流回调干预(增量画进画布与不透明笔同路),
-    -- 收笔时整笔区域重放统一修正为半透明
+    -- v62s: the opaque preview for live semi-transparent strokes needs no throttle callback intervention (drawn incrementally into the canvas like opaque strokes);
+    -- on pen-up the whole-stroke region replay uniformly corrects it to semi-transparent
     UIManager:setDirty(self, "partial", reg)
 end
 
--- 抽稀:点数超 MAX_STROKE_POINTS 时均匀保留(保首尾)。
--- 只影响超长笔画,视觉几乎无差异;把单笔内存与后续扫描成本收敛到上限内
+-- Thinning: when the point count exceeds MAX_STROKE_POINTS, keep points evenly (keeping first and last).
+-- Only affects very long strokes with almost no visual difference; caps per-stroke memory and later scan costs
 function M:_thinPoints(points)
     local n = #points
     if n <= const.MAX_STROKE_POINTS then
@@ -251,7 +251,7 @@ function M:_thinPoints(points)
         local idx = math.max(1, math.min(n, math.floor(1 + (i - 1) * step + 0.5)))
         out[i] = points[idx]
     end
-    out[const.MAX_STROKE_POINTS] = points[n] -- 保证尾点精确
+    out[const.MAX_STROKE_POINTS] = points[n] -- ensure the last point is exact
     return out
 end
 
@@ -268,8 +268,8 @@ function M:_finishStroke(x, y)
             table.insert(s.points, { x = x, y = y })
         end
     end
-    -- 增量消费剩余点 + 收尾半段(从最后中点弯到末点,与 shapes.polyline 一致)。
-    -- 显式传 s:_finishStroke 入口已把 self._stroke 置 nil,内部不能再读它
+    -- Incrementally consume the remaining points + the closing half-segment (bending from the last midpoint to the last point, same as shapes.polyline).
+    -- s is passed explicitly: _finishStroke's entry already set self._stroke to nil, so it can't be read inside
     local rx0, ry0, rx1, ry1 = self:_renderStrokeTail(s)
     local cx0, cy0, cx1, cy1 = self:_renderStrokeClose(s)
     if rx0 or cx0 then
@@ -280,13 +280,13 @@ function M:_finishStroke(x, y)
         last_reg = self:_dirtyRegion(minx, miny, maxx, maxy, s.width + 2)
     end
     if #s.points > 0 then
-        -- 超长笔画均匀抽稀(保首尾):限制单笔内存与后续扫描成本
+        -- Evenly thin very long strokes (keeping first and last): limits per-stroke memory and later scan costs
         if #s.points > const.MAX_STROKE_POINTS then
             s.points = self:_thinPoints(s.points)
         end
         if self.tool == "fill" then
-            -- 描边填:不提交路径元素,闭合填充后清掉路径墨迹(只留填充面)。
-            -- 收笔统一走这里,消除 onPanRelease/onHold/双指 等漏触发闭合填充的分支
+            -- Stroke fill: don't commit a path element; after the closed fill, clear the path ink (leaving only the filled area).
+            -- All pen-ups go through here, eliminating branches like onPanRelease/onHold/two-finger that missed triggering the closed fill
             self:_commitFillPath(s)
             return
         end
@@ -296,18 +296,18 @@ function M:_finishStroke(x, y)
         self:_clearRedo()
         self:_log("commit stroke", s.kind, #s.points, "points, gray", s.gray, "width", s.width)
     end
-    -- 收笔刷新:提交区域 = 最后一段 ∪ 节流累积区域(覆盖整笔)。
-    -- 增量墨迹直接画进 canvas_bb 恒在最上,当前层之上有可见图层时必须
-    -- 白刷+按层序重放恢复遮挡;重放画布已就绪,屏幕刷新保持原节流语义
+    -- Pen-up refresh: commit region = last segment ∪ throttle-accumulated region (covers the whole stroke).
+    -- Incremental ink drawn straight into canvas_bb is always on top; when visible layers lie above the current layer,
+    -- white-out + replay in layer order is required to restore occlusion; with the replay canvas ready, the screen refresh keeps the original throttle semantics
     local region = self:_mergeRegions(last_reg, self._stroke_region)
-    -- v62q:半透明笔迹实时阶段未画进画布(整笔单次合成),元素已入 elements,
-    -- 这里必须无条件区域重放(_redrawRegion 内 drawElement 拦截走单次合成);
-    -- 不能走 _commitRegionReplay 的"上层有内容才重放"守卫
+    -- v62q: during the live phase semi-transparent strokes weren't drawn into the canvas (single-pass compositing of the whole stroke), and the element is already in elements,
+    -- so the region must be replayed unconditionally here (drawElement inside _redrawRegion intercepts and does single-pass compositing);
+    -- the "replay only if upper layers have content" guard of _commitRegionReplay can't be used
     local t = self:_alphaBB(self.canvas_bb, s)
     local live_alpha = type(t) == "table" and t.__dp_alpha and t.__dp_alpha < 255 or false
     if live_alpha then
-        -- 擦净区域同样必须 = 整笔包围盒(region 只是尾段∪最后一次 flush 后的新段,
-        -- 盖不住整笔;旧前缀会残留最后一次 flush 的合成结果)
+        -- The wiped region must likewise = the whole-stroke bounding box (region is only the tail ∪ new segments after the last flush,
+        -- which doesn't cover the whole stroke; the old prefix would keep the composited result of the last flush)
         self._stroke_region = nil
         self._stroke_repaint_pending = false
         if self._stroke_repaint_fn then
@@ -315,10 +315,10 @@ function M:_finishStroke(x, y)
             self._stroke_repaint_fn = nil
         end
         local sreg = self:_strokeRegion(s)
-        -- v62v 快路:恢复落笔前快照(一次 blit 擦掉不透明实时预览),再对整笔
-        -- 做一次单次合成(drawElement 拦截 → drawFilledAlpha)。旧路径走
-        -- _redrawRegion:白刷+重放区域内全部元素(含背景填),元素多时收笔明显卡。
-        -- 当前层之上还有可见图层时快路恢复不了遮挡关系,退回重放
+        -- v62v fast path: restore the pre-stroke snapshot (one blit wipes the opaque live preview), then do a single-pass
+        -- composite of the whole stroke (drawElement intercepts -> drawFilledAlpha). The old path went through
+        -- _redrawRegion: white-out + replay every element in the region (including background fills), so pen-up stuttered noticeably with many elements.
+        -- When visible layers lie above the current layer the fast path can't restore occlusion, so fall back to replay
         local replay = true
         local snap = self._alpha_stroke_snap
         self._alpha_stroke_snap = nil
@@ -350,7 +350,7 @@ function M:_finishStroke(x, y)
     end
     self:_commitRegionReplay(region)
     if self._stroke_repaint_pending then
-        -- 节流回调挂起中:保留累积区域由回调刷屏(避免 nil 区域整屏 partial)
+        -- Throttle callback pending: keep the accumulated region for the callback to refresh (avoids a nil-region full-screen partial)
     else
         self._stroke_region = nil
         if region then
@@ -359,11 +359,11 @@ function M:_finishStroke(x, y)
     end
 end
 
--- 提交后的层序修正:进行中的墨迹是直接画进 canvas_bb 的(恒压在已有墨迹之上),
--- 只有当前层**之上还有"可见且有内容"的图层**时才需要白刷+按层序重放恢复遮挡。
--- 之上没有可见内容时新墨迹本来就该在最上层,直接跳过——否则每次落笔/每个元素提交
--- 都要把区域内的元素(含整幅背景填)重放一遍,元素一多刷新就明显变慢。
--- 跳过时补一次显隐缓存作废(新版核心有乒乓缓存,增量墨迹没经 _redrawRegion)
+-- Layer-order correction after commit: in-progress ink is drawn straight into canvas_bb (always on top of existing ink),
+-- so white-out + replay in layer order to restore occlusion is only needed when **visible layers with content lie above** the current layer.
+-- With no visible content above, the new ink belongs on top anyway, so skip - otherwise every stroke/element commit
+-- would replay the elements in the region (including full-canvas background fills), and refresh would slow noticeably with many elements.
+-- When skipping, also invalidate the visibility cache (newer cores have the ping-pong cache, and incremental ink didn't go through _redrawRegion)
 function M:_commitRegionReplay(region)
     if not region or not self.canvas_bb then
         return
@@ -380,7 +380,7 @@ function M:_commitRegionReplay(region)
     end
 end
 
--- 快速轻触/轻点产生的墨点(单点笔画,可撤销;防抖不拦截主动轻点)
+-- Ink dot from a quick tap/light tap (single-point stroke, undoable; debounce doesn't block deliberate taps)
 function M:_commitDot(x, y)
     local el = {
         kind = "freehand",
@@ -402,18 +402,18 @@ function M:_commitDot(x, y)
     UIManager:setDirty(self, "partial", region)
 end
 
--- ============================ 图形工具 ============================
+-- ============================ Shape tools ============================
 
--- 图形工具拖动:只记录锚点与当前点,不逐帧预览刷新;
--- 手指停留 SHAPE_PREVIEW_DELAY 秒才显示一次预览(收笔仍按最后更新的点一次确认)
+-- Shape tool drag: only record the anchor and current point, no per-frame preview refresh;
+-- a preview is shown once only after the finger rests for SHAPE_PREVIEW_DELAY seconds (pen-up still confirms once with the last updated point)
 function M:_trackShapeAnchor(ges)
     local x, y = self:_toCanvas(ges.pos.x, ges.pos.y)
     if not x then
         return
     end
     if not self._shape_start then
-        -- 锚点取按下点(画布坐标=屏幕坐标);start_pos 不在画布内时退回当前点。
-        -- 灰度/粗细在起笔时取一次并固定:随机模式下预览与提交一致、粗细不随停留变化
+        -- Anchor is the touch-down point (canvas coordinates = screen coordinates); falls back to the current point when start_pos isn't on the canvas.
+        -- Grey/width are taken once at pen-down and fixed: in random mode the preview matches the commit, and width doesn't change with resting
         local sx, sy = x, y
         if ges.start_pos then
             local sxv, syv = self:_toCanvas(ges.start_pos.x, ges.start_pos.y)
@@ -432,10 +432,10 @@ function M:_trackShapeAnchor(ges)
     self:_scheduleShapePreview(x, y)
 end
 
--- 重新安排 SHAPE_PREVIEW_DELAY 秒预览定时器。scheduleIn 返回 nil 取不到句柄,
--- 但 unschedule 按闭包引用取消:保存调度时同一个闭包,每次 pan 先取消再重排,
--- 定时器只在手指"停留满延迟"后触发一次,不再像旧版那样堆积成批爆发(设备上
--- 曾观测到同秒 40+ 条 preview shown 刷屏)
+-- Reschedule the SHAPE_PREVIEW_DELAY-second preview timer. scheduleIn returns nil so there is no handle,
+-- but unschedule cancels by closure reference: save the same closure used for scheduling, and on every pan cancel then reschedule,
+-- so the timer fires only once after the finger "rests for the full delay", instead of piling up into bursts like the old version (on the device
+-- 40+ "preview shown" log lines in the same second were once observed)
 function M:_scheduleShapePreview(x, y)
     if self._shape_preview_fn then
         UIManager:unschedule(self._shape_preview_fn)
@@ -454,11 +454,11 @@ function M:_scheduleShapePreview(x, y)
     UIManager:scheduleIn(const.SHAPE_PREVIEW_DELAY, fn)
 end
 
--- 定时器到点:手指停留 ≥SHAPE_PREVIEW_DELAY,显示形状预览(锚点→当前点)
+-- Timer fired: the finger rested ≥SHAPE_PREVIEW_DELAY, show the shape preview (anchor -> current point)
 function M:_maybeShowShapePreview()
     self._shape_preview_fn = nil
     if not self.canvas_bb then
-        return -- 关闭后挂起的回调:直接丢弃,不触碰已释放状态
+        return -- callback still pending after close: just discard it, don't touch freed state
     end
     local start = self._shape_start
     local pos = self._shape_pos
@@ -471,11 +471,11 @@ function M:_maybeShowShapePreview()
         self:_log("preview shown", self.preview.kind)
         UIManager:setDirty(self, "partial", self._shape_preview_region)
     else
-        self.preview = nil -- 过小形状不显示预览(落笔同样会被防抖丢弃)
+        self.preview = nil -- shapes that are too small get no preview (pen-down would discard them via debounce too)
     end
 end
 
--- 取消预览定时器并清除预览元素(保留 _shape_preview_region 供收笔刷新擦除)
+-- Cancel the preview timer and clear the preview element (keep _shape_preview_region for the pen-up refresh/erase)
 function M:_cancelShapePreview()
     if self._shape_preview_fn then
         UIManager:unschedule(self._shape_preview_fn)
@@ -489,14 +489,14 @@ function M:_buildShapeElement(tool, x0, y0, x1, y1, gray, width, alpha, blend)
         self:_log("_buildShapeElement: invalid coords", tool, x0, y0, x1, y1)
         return nil
     end
-    -- 灰度/粗细/透明度:起笔时(_trackShapeAnchor)取一次固定,预览与提交一致;
-    -- 未传(旧调用/兜底)时现场取一次。混合模式同理(随元素记录)
+    -- Grey/width/opacity: taken once and fixed at pen-down (_trackShapeAnchor), so the preview matches the commit;
+    -- if not passed (old callers/fallback) take them once on the spot. Same for blend mode (recorded with the element)
     gray = gray or self:_resolveGray()
     width = width or self:_resolveWidth()
     alpha = alpha or self:_resolveAlpha()
     blend = blend or self.alpha_blend
     if tool == "line" then
-        -- 直线(画笔长按切换的工具)带笔触形状;矩形/圆形保持圆笔触
+        -- Line (the tool toggled by long-pressing the brush) carries the brush tip shape; rectangle/circle keep the round tip
         return { kind = "line", x0 = x0, y0 = y0, x1 = x1, y1 = y1, gray = gray, width = width, alpha = alpha, blend = blend, tip = self.tip }
     elseif tool == "rect" then
         return { kind = "rect", x0 = x0, y0 = y0, x1 = x1, y1 = y1,
@@ -506,19 +506,19 @@ function M:_buildShapeElement(tool, x0, y0, x1, y1, gray, width, alpha, blend)
         return { kind = "circle", cx = x0, cy = y0, rx = r, ry = r,
             gray = gray, width = width, alpha = alpha, blend = blend, filled = self.circle_filled }
     elseif tool == "eraser" then
-        -- 矩形框橡皮:预览画半灰实心矩形(可见),提交时 _commitShape 改为白色擦除
+        -- Rectangle box eraser: the preview draws a half-grey solid rectangle (visible); on commit _commitShape turns it into a white erase
         return { kind = "rect", x0 = x0, y0 = y0, x1 = x1, y1 = y1,
             gray = 0.5, width = 2, filled = true }
     end
     return nil
 end
 
--- 收笔:用释放点重建最终元素并落盘;零尺寸(未拖动)不提交
+-- Pen-up: rebuild the final element from the release point and commit it; zero size (no drag) isn't committed
 function M:_commitShape(x, y)
     local start = self._shape_start
     self._shape_start = nil
     self:_cancelShapePreview()
-    -- 曾显示的预览区域也要一并刷新(擦除预览残留)
+    -- The previously shown preview region must be refreshed too (erasing preview leftovers)
     local prev_region = self._shape_preview_region
     self._shape_preview_region = nil
     if not start then
@@ -548,16 +548,16 @@ function M:_commitShape(x, y)
     self:_clearRedo()
     shapes.drawElement(self:_alphaBB(self.canvas_bb, el), el, Blitbuffer.gray(el.gray))
     self:_log("commit shape", el.kind, "at", start.x, start.y, "->", x1, y1)
-    -- 刷新区域:元素实际范围(圆完整,不缺块) ∪ 曾显示的预览范围;
-    -- 上方有可见图层时重放恢复层序(新形状不能压住高层墨迹)
+    -- Refresh region: the element's actual extent (whole circle, no missing chunks) ∪ the previously shown preview extent;
+    -- when visible layers lie above, replay to restore layer order (the new shape must not cover higher-layer ink)
     local region = self:_mergeRegions(self:_elementRegion(el), prev_region)
     self:_commitRegionReplay(region)
     UIManager:setDirty(self, "partial", region)
 end
 
--- 落笔防抖:形状尺寸小于阈值视为误触丢弃(零尺寸同样丢弃)。
--- 阈值只按形状自身尺寸(SHAPE_MIN_SIZE),与线宽解耦——粗细上限 800 时
--- 若随笔宽放大(width*2)可达数百 px,正常尺寸的空心圆/矩形全被丢弃
+-- Pen-down debounce: shapes smaller than the threshold are treated as accidental touches and discarded (zero size likewise).
+-- The threshold depends only on the shape's own size (SHAPE_MIN_SIZE), decoupled from line width - with a width limit of 800,
+-- scaling with brush width (width*2) could reach hundreds of px, discarding every normally sized hollow circle/rectangle
 function M:_shapeIsEmpty(el)
     local min_size = const.SHAPE_MIN_SIZE
     if el.kind == "line" then
@@ -573,10 +573,10 @@ function M:_shapeIsEmpty(el)
     return false
 end
 
--- ============================ 橡皮:删除对象 ============================
+-- ============================ Eraser: delete objects ============================
 
--- 删除一批对象并记录撤销(按原索引从高到低移除,索引保持有效)
--- 只白刷并重绘"被删元素范围并集"区域,画布再大也不用整幅重放
+-- Delete a batch of objects and record undo (removed from highest to lowest original index, keeping indices valid)
+-- Only whites out and redraws the "union of the deleted elements' extents", so no full replay however large the canvas is
 function M:_deleteElements(idxs, els)
     for j = #idxs, 1, -1 do
         table.remove(self.elements, idxs[j])
@@ -588,7 +588,7 @@ function M:_deleteElements(idxs, els)
     for _, el in ipairs(els) do
         region = self:_mergeRegions(region, self:_elementRegion(el))
         if el == self._selected then
-            self._selected = nil -- 被删对象是选中对象时清除选中(区域已并入重绘)
+            self._selected = nil -- clear the selection when the deleted object is the selected one (its region is already merged into the redraw)
         end
     end
     if region then
@@ -597,7 +597,7 @@ function M:_deleteElements(idxs, els)
     end
 end
 
--- 选取点到元素"着墨点"(实际绘制像素)的距离;0 = 点在墨迹上
+-- Distance from the pick point to an element's "inked points" (actually drawn pixels); 0 = point is on the ink
 function M:_inkDistance(el, px, py)
     if el.kind == "freehand" or el.kind == "eraser" then
         local pts = el.points
@@ -610,13 +610,13 @@ function M:_inkDistance(el, px, py)
         if #pts == 1 then
             d = math.sqrt((px - pts[1].x) ^ 2 + (py - pts[1].y) ^ 2)
         end
-        -- 笔画有厚度:墨迹表面距离 = 中心线距离 - 半径
+        -- Strokes have thickness: distance to the ink surface = distance to the centre line - radius
         return math.max(0, d - (el.width or 2) / 2)
     elseif el.kind == "poly" then
-        -- 闭合多边形(旋转后的矩形):各边(含首尾闭合段)的距离
+        -- Closed polygon (rotated rectangle): distance to each edge (including the closing segment between last and first)
         local pts = el.points
         local n = #pts
-        -- 实心:内部即墨迹(偶奇规则点在多边形内,v61k 与渲染同步)
+        -- Solid: the interior is ink (even-odd rule point-in-polygon, v61k in sync with rendering)
         if el.filled then
             local inside = false
             for i = 1, n do
@@ -641,7 +641,7 @@ function M:_inkDistance(el, px, py)
         local d = const.pointSegDist(px, py, el.x0, el.y0, el.x1, el.y1)
         return math.max(0, d - (el.width or 2) / 2)
     elseif el.kind == "rect" then
-        -- 实心:内部(几何边界±笔宽/2,与包围盒语义解耦)即墨迹;空心:只算四条描边
+        -- Solid: the interior (geometric boundary ± width/2, decoupled from bounding-box semantics) is ink; hollow: only the four outline edges count
         local pr = (el.width or 2) / 2
         local xa, xb = math.min(el.x0, el.x1), math.max(el.x0, el.x1)
         local ya, yb = math.min(el.y0, el.y1), math.max(el.y0, el.y1)
@@ -655,7 +655,7 @@ function M:_inkDistance(el, px, py)
         d = math.min(d, const.pointSegDist(px, py, xa, yb, xa, ya))
         return math.max(0, d - pr)
     elseif el.kind == "circle" then
-        -- 圆/椭圆(含旋转):变换到椭圆本地系,按归一化距离近似着墨距离
+        -- Circle/ellipse (including rotated): transform into the ellipse's local frame, approximate the ink distance by normalised distance
         local rx, ry = el.rx or el.r, el.ry or el.rx or el.r
         local dx, dy = px - el.cx, py - el.cy
         local rot = el.rot or 0
@@ -666,18 +666,18 @@ function M:_inkDistance(el, px, py)
         local dist_norm = math.sqrt((dx / rx) ^ 2 + (dy / ry) ^ 2)
         local min_r = math.min(rx, ry)
         if el.filled then
-            -- 实心:墨迹延伸到描边外缘(r+笔宽/2),整段内部均为 0(粗笔边缘点选不落空)
+            -- Solid: ink extends to the outline's outer edge (r + width/2), the whole interior is 0 (picking at the edge of thick shapes doesn't miss)
             local outer = 1 + (el.width or 2) / 2 / min_r
             if dist_norm <= outer then
                 return 0
             end
             return (dist_norm - outer) * min_r
         end
-        -- 空心:只算椭圆周
+        -- Hollow: only the ellipse perimeter counts
         return math.max(0, math.abs(dist_norm - 1) * min_r - (el.width or 2) / 2)
     elseif el.kind == "text" then
-        -- 文字按渲染外接框近似;旋转文字先逆变换到未旋转局部系再量距离。
-        -- 逆旋转中心 = 基线左端(与 _drawTextTo/_elementBBox 同锚点:基线 = el.y + 0.8*字号)
+        -- Text is approximated by its rendered bounding box; rotated text is first inverse-transformed into the unrotated local frame before measuring.
+        -- Inverse rotation centre = left end of the baseline (same anchor as _drawTextTo/_elementBBox: baseline = el.y + 0.8*font size)
         local e = self:_textExtent(el)
         if not e then
             return math.huge
@@ -699,7 +699,7 @@ function M:_inkDistance(el, px, py)
         local dy = math.max(b.y0 - ly, 0, ly - b.y1)
         return math.sqrt(dx * dx + dy * dy)
     elseif el.kind == "fill" then
-        -- 填充结果按包围盒近似(不可选取,仅兜底)
+        -- Fill results are approximated by their bounding box (not pickable, fallback only)
         local b = self:_elementBBox(el)
         if not b then
             return math.huge
@@ -711,13 +711,13 @@ function M:_inkDistance(el, px, py)
     return math.huge
 end
 
--- 选取点击点处"最上层可见"的对象:倒序(绘制序=下层→上层,后画者在上)遍历,
--- 点击点正好落在某对象着墨上(距离 0 = 该处被它盖住/可见)立即返回该层最上的对象;
--- 都不在着墨上(点在空白间隙)时退回"着墨距离最近"的候选(容差内可点中)。
--- 填充结果(fill)也可选(移动/复制/灰度/缩放;墨迹距离按 bbox 近似)
+-- Pick the "topmost visible" object at the tap point: iterate in reverse (draw order = bottom -> top, later drawn is on top),
+-- if the tap point lands right on an object's ink (distance 0 = covered by it/visible there) return the topmost such object immediately;
+-- if none is under the ink (the point is in a blank gap) fall back to the candidate with the "nearest ink distance" (pickable within tolerance).
+-- Fill results (fill) are also pickable (move/copy/grey/scale; ink distance approximated by bbox)
 function M:_pickElementAt(x, y, tolerance)
     tolerance = tolerance or const.PICK_TOLERANCE
-    -- 当前层隐藏时其元素全部不可见,点选/点删都不应命中(v57 对抗性测试暴露)
+    -- When the current layer is hidden all its elements are invisible, so tap-select/tap-delete must not hit them (exposed by v57 adversarial tests)
     if not self.layer_visible[self.active_layer] then
         return nil
     end
@@ -729,7 +729,7 @@ function M:_pickElementAt(x, y, tolerance)
             and y >= b.y0 - tolerance and y <= b.y1 + tolerance then
             local d = self:_inkDistance(el, x, y)
             if d <= 0 then
-                return el, i -- 最上层可见对象(该点处盖住下层)
+                return el, i -- topmost visible object (covers the layers below at this point)
             end
             if d < best_d then
                 best_d = d
@@ -743,8 +743,8 @@ function M:_pickElementAt(x, y, tolerance)
     return nil
 end
 
--- 点按删除:删除点击点处"最上层可见"的对象(距离 0 优先,倒序取最上;
--- 点在间隙时按最近着墨);距所有墨迹都超过容差则视为点空白,不删除
+-- Tap delete: delete the "topmost visible" object at the tap point (distance 0 first, topmost in reverse order;
+-- in gaps use the nearest ink); if all ink is beyond the tolerance it counts as tapping blank space and nothing is deleted
 function M:_eraseAt(x, y)
     local el, i = self:_pickElementAt(x, y)
     if el then
@@ -754,7 +754,7 @@ function M:_eraseAt(x, y)
     return false
 end
 
--- 框选:删除与矩形相交的对象(相交判定走缓存 bbox)
+-- Box select: delete objects intersecting the rectangle (intersection test uses the cached bbox)
 function M:_eraseInRect(x0, y0, x1, y1)
     local xa, ya = math.min(x0, x1), math.min(y0, y1)
     local xb, yb = math.max(x0, x1), math.max(y0, y1)
@@ -771,7 +771,7 @@ function M:_eraseInRect(x0, y0, x1, y1)
     end
 end
 
--- 画笔擦:拖动收集路径点(不绘制、不刷新,快)
+-- Brush erase: dragging collects path points (no drawing, no refresh, fast)
 function M:_trackErasePath(ges)
     if not self._erase_path then
         self._erase_path = { points = {} }
@@ -786,7 +786,7 @@ function M:_trackErasePath(ges)
     end
 end
 
--- 画笔擦收笔:删除与路径包围盒相交的对象
+-- Brush erase pen-up: delete objects intersecting the path's bounding box
 function M:_commitErasePath(x, y)
     local path = self._erase_path
     self._erase_path = nil
@@ -804,7 +804,7 @@ function M:_commitErasePath(x, y)
     self:_eraseInRect(minx - m, miny - m, maxx + m, maxy + m)
 end
 
--- 矩形框擦收笔:删除框内对象(锚点与 0.5s 灰框预览复用图形工具机制)
+-- Rectangle box erase pen-up: delete objects inside the box (the anchor and 0.5s grey box preview reuse the shape tool mechanism)
 function M:_commitEraseRect(x, y)
     local start = self._shape_start
     self._shape_start = nil
@@ -817,13 +817,13 @@ function M:_commitEraseRect(x, y)
     self:_eraseInRect(start.x, start.y, x1, y1)
 end
 
--- ============================ 填充工具 ============================
+-- ============================ Fill tool ============================
 
--- 洪泛填充:从 (sx,sy) 起,填充连通区域(边缘感知,扫描线算法)。
--- 展开到相邻像素要求:①与相邻像素局部差 ≤ FILL_EDGE_TOLERANCE(局部边缘检测——
--- 浅色描边与白背景差 >8 即成边界,与种子色无关,5%~9% 及更浅描边都能识别);
--- ②与种子像素差 ≤ FILL_TOLERANCE(整体一致兜底,防沿缓变梯度爬走)。
--- 不改画布像素,返回 span 列表 { {y, x0, x1}, ... } 供 fill 元素重放
+-- Flood fill: from (sx,sy), fill the connected region (edge-aware, scanline algorithm).
+-- Expanding to a neighbouring pixel requires: ① local difference from the neighbour ≤ FILL_EDGE_TOLERANCE (local edge detection -
+-- light strokes differing from the white background by >8 become boundaries, independent of the seed colour, so 5%~9% and lighter strokes are recognised);
+-- ② difference from the seed pixel ≤ FILL_TOLERANCE (overall consistency backstop, prevents creeping along gradual gradients).
+-- Doesn't modify canvas pixels; returns a span list { {y, x0, x1}, ... } for replaying the fill element
 function M:_floodFillSpans(bb, sx, sy, tol)
     local bw, bh = bb:getWidth(), bb:getHeight()
     if sx < 0 or sx >= bw or sy < 0 or sy >= bh then
@@ -844,7 +844,7 @@ function M:_floodFillSpans(bb, sx, sy, tol)
         return a >= 0 and math.abs(a - ref) <= edge_tol and math.abs(a - target) <= tol
     end
     local spans = {}
-    local seen = {} -- seen[y] = 已处理的 {x0,x1} 列表
+    local seen = {} -- seen[y] = list of processed {x0,x1}
     local function overlaps(y, x0, x1)
         local list = seen[y]
         if not list then
@@ -861,14 +861,14 @@ function M:_floodFillSpans(bb, sx, sy, tol)
     while #stack > 0 do
         local seg = table.remove(stack)
         local y, x0, x1 = seg[1], seg[2], seg[3]
-        local e0, e1 = x0, x1 -- 当前行向两侧扩展(与相邻像素比)
+        local e0, e1 = x0, x1 -- expand the current row to both sides (compared with the neighbouring pixel)
         while e0 - 1 >= 0 and fillable(e0 - 1, y, pval(e0, y)) do e0 = e0 - 1 end
         while e1 + 1 < bw and fillable(e1 + 1, y, pval(e1, y)) do e1 = e1 + 1 end
         if not overlaps(y, e0, e1) then
             if not seen[y] then seen[y] = {} end
             table.insert(seen[y], { e0, e1 })
             table.insert(spans, { y, e0, e1 })
-            for _, ny in ipairs({ y - 1, y + 1 }) do -- 上下相邻行找新种子段(与正上/下方像素比)
+            for _, ny in ipairs({ y - 1, y + 1 }) do -- find new seed segments in the rows above/below (compared with the pixel directly above/below)
                 if ny >= 0 and ny < bh then
                     local nx = e0
                     while nx <= e1 do
@@ -891,7 +891,7 @@ function M:_floodFillSpans(bb, sx, sy, tol)
     return spans
 end
 
--- 点填:洪泛填充点击点所在封闭区域,结果存为 fill 元素(可撤销;区域重绘按 span 重放)
+-- Tap fill: flood-fill the enclosed area at the tap point, stored as a fill element (undoable; region redraw replays the spans)
 function M:_fillAt(x, y)
     if not self.canvas_bb then
         return
@@ -912,9 +912,9 @@ function M:_fillAt(x, y)
     self:_log("fill at", x, y, #spans, "spans")
 end
 
--- 闭合多边形内部 span(偶奇规则扫描线填充):只按路径自身几何计算,忽略画布其他墨迹。
--- 逐行求各边与扫描线交点(半开区间防顶点重复计数),排序后成对取区间。
--- 返回 span 列表 { {y, x0, x1}, ... }(自交路径如 8 字形按偶奇规则分块)
+-- Interior spans of a closed polygon (even-odd rule scanline fill): computed only from the path's own geometry, ignoring other ink on the canvas.
+-- Per row, find the intersections of each edge with the scanline (half-open intervals prevent double-counting vertices), sort, and take intervals in pairs.
+-- Returns a span list { {y, x0, x1}, ... } (self-intersecting paths such as a figure 8 are split into pieces by the even-odd rule)
 function M:_polygonFillSpans(pts)
     local spans = {}
     local n = #pts
@@ -948,23 +948,23 @@ function M:_polygonFillSpans(pts)
     return spans
 end
 
--- Chaikin corner cutting 平滑闭合路径(含起笔点/落笔点,循环覆盖首尾)。
--- 每轮迭代对每个顶点在其与相邻顶点的连线上取 1/4 与 3/4 两个新点,
--- 新点恒在折线上 → 天然无过冲、无尖峰、无尖角(收敛到二次均匀 B 样条,C1 平滑);
--- 迭代 rounds 轮后末点回到首点闭合。不假设首=末:先去掉与首点重合的末点,
--- 再对唯一点序列循环(闭合段由落笔趋势延续到起点,自然圆滑)。
--- 返回闭合的平滑点序列(供填充边界扫描)
+-- Smooth a closed path with Chaikin corner cutting (including the pen-down/pen-up points, wrapping around first and last).
+-- Each iteration takes two new points at 1/4 and 3/4 along the line from each vertex to its neighbour;
+-- new points always lie on the polyline -> naturally no overshoot, no spikes, no sharp corners (converges to a quadratic uniform B-spline, C1 smooth);
+-- after rounds iterations the last point returns to the first to close. Doesn't assume first = last: first drop a last point coinciding with the first,
+-- then loop over the unique point sequence (the closing segment continues the pen-up trend back to the start, naturally smooth).
+-- Returns the closed smoothed point sequence (for scanning the fill boundary)
 function M:_smoothClosedPath(pts, rounds)
     rounds = rounds or 2
     local n = #pts
-    -- 去掉与首点重合的末点(用户已闭合);未闭合(末≠首)则保留全部点,循环自动闭合
+    -- Drop a last point that coincides with the first (the user already closed it); if not closed (last≠first) keep all points, the loop closes it automatically
     local first = pts[1]
     local last_p = pts[n]
     if last_p and last_p.x == first.x and last_p.y == first.y then
         n = n - 1
     end
     if n < 3 then
-        return pts -- 不足以构成闭合区域,直接返回
+        return pts -- not enough to form a closed region, return as is
     end
     local cur = {}
     for i = 1, n do
@@ -974,7 +974,7 @@ function M:_smoothClosedPath(pts, rounds)
     for r = 1, rounds do
         local nxt = {}
         for i = 1, m do
-            -- 段 P1→P2 产生 3/4 点(靠近 P1)与 1/4 点(靠近 P2),标准 corner cutting
+            -- Segment P1→P2 yields the 3/4 point (near P1) and the 1/4 point (near P2), standard corner cutting
             local p1 = cur[i]
             local p2 = cur[(i % m) + 1]
             nxt[#nxt + 1] = {
@@ -989,7 +989,7 @@ function M:_smoothClosedPath(pts, rounds)
         cur = nxt
         m = #cur
     end
-    -- 闭合:末点回到平滑序列的首点(Chaikin 切角后首点=首段 3/4 点,非原始起点)
+    -- Close: the last point returns to the first point of the smoothed sequence (after Chaikin cutting the first point = the first segment's 3/4 point, not the original start)
     local first = cur[1]
     local last = cur[#cur]
     if last and (last.x ~= first.x or last.y ~= first.y) then
@@ -998,12 +998,12 @@ function M:_smoothClosedPath(pts, rounds)
     return cur
 end
 
--- 描边填收笔:路径画时可见(界定区域),收笔后只留填充面、路径墨迹被清除。
--- 路径不作为元素提交;按自身几何(偶奇规则)算内部,不理会画布其他笔画;
--- 退化(点数不足/共线)时清掉路径墨迹、不留任何东西。
+-- Stroke fill pen-up: the path is visible while drawing (delimits the area); after pen-up only the filled area remains and the path ink is cleared.
+-- The path isn't committed as an element; the interior is computed from its own geometry (even-odd rule), ignoring other strokes on the canvas;
+-- when degenerate (too few points/collinear) the path ink is cleared and nothing is left.
 function M:_commitFillPath(s)
     if not s or not s.points or #s.points < 3 then
-        -- 退化路径:白刷已画的路径墨迹,不留路径也不留填充
+        -- Degenerate path: white out the drawn path ink, leaving neither path nor fill
         if s then
             local region = self:_elementRegion(s)
             if region then
@@ -1013,38 +1013,38 @@ function M:_commitFillPath(s)
         end
         return
     end
-    -- 取消挂起的笔画节流(避免收笔后僵尸定时器多刷一次旧区域)
+    -- Cancel the pending stroke throttle (prevents a zombie timer refreshing the old region once more after pen-up)
     if self._stroke_repaint_fn then
         UIManager:unschedule(self._stroke_repaint_fn)
         self._stroke_repaint_fn = nil
     end
     self._stroke_repaint_pending = false
     self._stroke_region = nil
-    -- 画时路径墨迹区域(此时末点仍是原落点,覆盖全部已画墨迹)
+    -- Path ink region while drawing (the last point is still the original pen-up point here, covering all drawn ink)
     local path_region = self:_elementRegion(s)
     local pts = s.points
-    -- 不吸附末点(保留原落笔点):闭合由 _smoothClosedPath 循环处理,
-    -- 落笔趋势自然延续到起点,闭合处无"吸附直线段"造成的尖峰
+    -- Don't snap the last point (keep the original pen-up point): closing is handled by _smoothClosedPath's wrap-around,
+    -- the pen-up trend continues naturally to the start, with no spike from a "snapped straight segment" at the join
     local smooth = self:_smoothClosedPath(pts)
     local spans = self:_polygonFillSpans(smooth)
     if #spans == 0 then
-        -- 共线退化:清掉路径墨迹,不留填充
+        -- Collinear degenerate case: clear the path ink, no fill
         if path_region then
             self:_redrawRegion(path_region)
             UIManager:setDirty(self, "partial", path_region)
         end
         return
     end
-    -- src_points 保存平滑后源顶点:后续旋转/缩放只变换顶点重算 spans,
-    -- 不再从量化 span 反建几何,避免逐次变换向外漂移(穿模细线)
+    -- src_points stores the smoothed source vertices: later rotate/scale only transform the vertices and recompute spans,
+    -- no longer rebuilding geometry from quantised spans, avoiding outward drift with each transform (thin lines poking through)
     local el = { kind = "fill", spans = spans, src_points = smooth,
         gray = s.gray or self:_resolveGray(), alpha = s.alpha or self:_resolveAlpha(),
         blend = s.blend or self.alpha_blend }
     table.insert(self.elements, el)
     self:_cacheBBox(el)
-    self:_pushUndo({ kind = "add", el = el }) -- 单条撤销记录(一次撤销即清空填充)
+    self:_pushUndo({ kind = "add", el = el }) -- a single undo record (one undo clears the fill)
     self:_clearRedo()
-    -- 白刷 路径区域∪填充区域 并重绘:fill 元素被重绘,路径非元素不重绘 → 路径墨迹消失
+    -- White out path region ∪ fill region and redraw: the fill element is redrawn, the path isn't an element so it isn't -> the path ink disappears
     local region = self:_mergeRegions(path_region, self:_elementRegion(el))
     self:_redrawRegion(region)
     UIManager:setDirty(self, "partial", region)

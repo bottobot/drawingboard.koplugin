@@ -1,5 +1,5 @@
 --[[--
-drawingpad.actions — 撤销/重做/清空/刷新/保存/关闭方法(DrawingCanvas 混合模块)。
+drawingpad.actions - undo/redo/clear/refresh/save/close methods (DrawingCanvas mixin module).
 --]]
 
 local DataStorage = require("datastorage")
@@ -14,22 +14,22 @@ local _ = require("gettext")
 
 local M = {}
 
--- v61p 清理:v59b 扁平化后 旧合并按钮家族(_doUndoRedo/_toggleUndoMode/
--- _doRefreshClear/_toggleClearMode)与 undo_mode/clear_mode 字段已无 UI 入口,全删
+-- v61p cleanup: after the v59b flattening, the old combined-button family (_doUndoRedo/_toggleUndoMode/
+-- _doRefreshClear/_toggleClearMode) and the undo_mode/clear_mode fields have no UI entry point; all removed
 
--- 全屏刷新(一级底栏刷新键):只发一次 full 波形清 EPD 残影,不再整幅重放元素。
--- v62d:旧版先 _renderAll 重建画布是修"旧版局部重绘越界涂写烧错画布"的——v61w 起
--- 区域重绘走隔离临时 BB、提交恒有层序重放,画布增量保持正确,重放成了纯开销
--- (多元素时明显变慢,用户实测);内容修正仍由 图层显隐/编辑操作 的重放路径承担。
--- 若将来出现"画布烧错且刷新修不了",恢复这里的 self:_renderAll() 即可
+-- Full-screen refresh (top-level bottom-bar refresh key): send a single full waveform to clear EPD ghosting, no longer replaying all elements.
+-- v62d: the old version ran _renderAll first to rebuild the canvas, to fix "old partial redraws overrunning and corrupting the canvas" - since v61w
+-- region redraws use an isolated temp BB and commits always replay in layer order, so incremental canvas state stays correct and the replay became pure overhead
+-- (noticeably slower with many elements, measured by the user); content correction is still handled by the replay paths of layer visibility/edit operations.
+-- If "canvas corrupted and refresh can't fix it" ever shows up, just restore self:_renderAll() here
 function M:_refreshCanvas()
     UIManager:setDirty(self, "full")
     self:_log("full refresh")
 end
 
--- ============================ 撤销 / 重做 / 清空 ============================
+-- ============================ Undo / Redo / Clear ============================
 
--- 压入撤销记录;超过 UNDO_LIMIT 丢弃最旧(防内存无限增长)
+-- Push an undo record; beyond UNDO_LIMIT drop the oldest (prevents unbounded memory growth)
 function M:_pushUndo(rec)
     table.insert(self.undo, rec)
     if #self.undo > const.UNDO_LIMIT then
@@ -37,16 +37,16 @@ function M:_pushUndo(rec)
     end
 end
 
--- 清空当前层 redo 栈:v61p 修复——历史上 17 处 `self.redo = {}` 用新表替换栈对象,
--- 切断与 layers_redo[层号] 的绑定,切层往返后引用漂移、redo 记录丢失;必须原位清空
+-- Clear the current layer's redo stack: v61p fix - historically 17 sites did `self.redo = {}`, replacing the stack object with a new table,
+-- breaking the binding to layers_redo[layer], so references drifted and redo records were lost after switching layers; must clear in place
 function M:_clearRedo()
     for i = #self.redo, 1, -1 do
         self.redo[i] = nil
     end
 end
 
--- 撤销:操作记录栈(add=移除该元素,del=恢复被删元素到原位)
--- 只重绘受影响区域(被移元素/被恢复元素的范围并集),不再整幅重放
+-- Undo: operation record stack (add=remove that element, del=restore the deleted element to its original position)
+-- Only redraw the affected region (union of extents of removed/restored elements), no full replay anymore
 function M:_undo()
     local rec = table.remove(self.undo)
     if not rec then
@@ -55,7 +55,7 @@ function M:_undo()
     local region = nil
     if rec.kind == "add" then
         if rec.els then
-            -- 组合记录(如描边填 = 填充+描边):逐个按引用移除,刷新区域取并集
+            -- Compound record (e.g. stroke fill = fill + stroke): remove each by reference, refresh region is the union
             for _, el in ipairs(rec.els) do
                 for i = #self.elements, 1, -1 do
                     if self.elements[i] == el then
@@ -66,7 +66,7 @@ function M:_undo()
                 region = self:_mergeRegions(region, self:_elementRegion(el))
             end
         else
-            -- 从 elements 移除该元素(按引用)
+            -- Remove the element from elements (by reference)
             for i = #self.elements, 1, -1 do
                 if self.elements[i] == rec.el then
                     table.remove(self.elements, i)
@@ -76,7 +76,7 @@ function M:_undo()
             region = self:_elementRegion(rec.el)
         end
     elseif rec.kind == "del" then
-        -- 恢复被删除的元素到原索引(升序插入保持位置;钳制防越界)
+        -- Restore deleted elements to their original indices (ascending inserts keep positions; clamped to stay in bounds)
         for j = 1, #rec.els do
             local idx = math.min(rec.idxs[j], #self.elements + 1)
             table.insert(self.elements, idx, rec.els[j])
@@ -85,13 +85,13 @@ function M:_undo()
             region = self:_mergeRegions(region, self:_elementRegion(el))
         end
     elseif rec.kind == "move" then
-        -- 移动撤销:按反向量平移回去,重绘 撤销前∪撤销后 区域
+        -- Move undo: translate back by the reverse vector, redraw the before-undo ∪ after-undo region
         local old_region = self:_elementRegion(rec.el)
         self:_moveElement(rec.el, -rec.dx, -rec.dy)
         self:_cacheBBox(rec.el)
         region = self:_mergeRegions(old_region, self:_elementRegion(rec.el))
     elseif rec.kind == "transform" then
-        -- 变形撤销:恢复几何快照(缩放/旋转),重绘 撤销前∪撤销后 区域
+        -- Transform undo: restore the geometry snapshot (scale/rotate), redraw the before-undo ∪ after-undo region
         local old_region = self:_elementRegion(rec.el)
         self:_restoreGeom(rec.el, rec.orig)
         self:_cacheBBox(rec.el)
@@ -101,7 +101,7 @@ function M:_undo()
     self:_log("undo", rec.kind)
     if self._selected then
         region = self:_mergeRegions(region, self:_elementRegion(self._selected))
-        self._selected = nil -- 撤销后选中对象可能已变,清空选中(高亮随区域重绘清除)
+        self._selected = nil -- selected object may have changed after undo; clear selection (highlight is cleared by the region redraw)
     end
     if region then
         self:_redrawRegion(region)
@@ -117,18 +117,18 @@ function M:_redo()
     local region = nil
     if rec.kind == "add" then
         if rec.els then
-            -- 组合记录按列表顺序追加(填充→描边),保持 填充在下、描边在上 的层序
+            -- Compound records are appended in list order (fill -> stroke), keeping fill below and stroke above in layer order
             for _, el in ipairs(rec.els) do
                 table.insert(self.elements, el)
                 region = self:_mergeRegions(region, self:_elementRegion(el))
             end
         else
-            -- 追加回末尾(add 总是追加提交)
+            -- Append back at the end (add always commits by appending)
             table.insert(self.elements, rec.el)
             region = self:_elementRegion(rec.el)
         end
     elseif rec.kind == "del" then
-        -- 再次删除(按引用)
+        -- Delete again (by reference)
         for _, el in ipairs(rec.els) do
             for i = #self.elements, 1, -1 do
                 if self.elements[i] == el then
@@ -141,13 +141,13 @@ function M:_redo()
             region = self:_mergeRegions(region, self:_elementRegion(el))
         end
     elseif rec.kind == "move" then
-        -- 移动重做:按正向向量再平移一次,重绘 重做前∪重做后 区域
+        -- Move redo: translate once more by the forward vector, redraw the before-redo ∪ after-redo region
         local old_region = self:_elementRegion(rec.el)
         self:_moveElement(rec.el, rec.dx, rec.dy)
         self:_cacheBBox(rec.el)
         region = self:_mergeRegions(old_region, self:_elementRegion(rec.el))
     elseif rec.kind == "transform" then
-        -- 变形重做:恢复最终几何快照
+        -- Transform redo: restore the final geometry snapshot
         local old_region = self:_elementRegion(rec.el)
         self:_restoreGeom(rec.el, rec.final)
         self:_cacheBBox(rec.el)
@@ -157,7 +157,7 @@ function M:_redo()
     self:_log("redo", rec.kind)
     if self._selected then
         region = self:_mergeRegions(region, self:_elementRegion(self._selected))
-        self._selected = nil -- 重做后选中对象可能已变,清空选中(高亮随区域重绘清除)
+        self._selected = nil -- selected object may have changed after redo; clear selection (highlight is cleared by the region redraw)
     end
     if region then
         self:_redrawRegion(region)
@@ -174,7 +174,7 @@ function M:_clearAll()
         ok_text = L.x(_("Clear")),
         cancel_text = L.x(_("Cancel")),
         ok_callback = function()
-            -- 只清当前层:原位重置该层的 元素/撤销/重做,保持引用关系
+            -- Clear only the current layer: reset that layer's elements/undo/redo in place, keeping references intact
             self.layers[self.active_layer] = {}
             self.elements = self.layers[self.active_layer]
             self.layers_undo[self.active_layer] = {}
@@ -198,10 +198,10 @@ function M:_clearAll()
     })
 end
 
--- ============================ 保存 ============================
+-- ============================ Save ============================
 
--- 保存:弹对话框(文件名输入 + 文件夹选择),确认后延迟执行裁剪+编码。
--- 空画板直接提示,不进对话框
+-- Save: show a dialog (filename input + folder picker); on confirm, run crop + encode deferred.
+-- An empty board just shows a notice, no dialog
 function M:_save()
     if #self.elements == 0 then
         components.showToast(_("Canvas is empty, nothing to save."), 2)
@@ -214,7 +214,7 @@ function M:_save()
             return L.t("Folder: root", "文件夹: 根目录")
         end
         if #f > 26 then
-            f = "…" .. f:sub(-24) -- 长绝对路径截断显示(按钮空间有限)
+            f = "…" .. f:sub(-24) -- truncate long absolute paths for display (limited button space)
         end
         return L.t("Folder: ", "文件夹: ") .. f
     end
@@ -234,7 +234,7 @@ function M:_save()
             {
                 { id = "folder_btn", text = folderLabel(),
                   callback = function() self:_pickSaveFolder(updateFolderLabel, function(name)
-                      dlg:setInputText(name) -- 点已有 PNG:预填文件名(自动补 .png)
+                      dlg:setInputText(name) -- tapping an existing PNG prefills the filename (.png appended automatically)
                   end) end },
             },
             {
@@ -249,24 +249,24 @@ function M:_save()
             },
         },
     }
-    -- 对话框按钮即时响应(去掉 flash_ui 阻塞,公共组件)
+    -- Dialog buttons respond immediately (drop the blocking flash_ui, shared component)
     components.instantButtons(dlg.button_table)
     UIManager:show(dlg)
     dlg:onShowKeyboard()
 end
 
--- 按对话框输入执行保存流程:组装路径 → 重名加序号 → "保存中"提示 → 延迟 _doSave。
--- v57:文件名拦斜杠(防把 "/" 当目录分隔写进意外路径);失败自动重试 1 次(SD 卡偶发繁忙)
+-- Run the save flow from the dialog input: build path -> add a number on name clash -> "Saving" notice -> deferred _doSave.
+-- v57: reject slashes in filenames (prevents "/" acting as a directory separator into an unexpected path); retry once on failure (SD card occasionally busy)
 function M:_doSaveFlow(filename)
     if not filename or filename == "" then
         filename = os.date("drawing_%Y%m%d_%H%M%S")
     end
-    -- 文件名不能含路径分隔符:用户输入 "a/b" 会把 b.png 写进不存在的 a/ 目录
+    -- Filename must not contain path separators: input "a/b" would write b.png into a nonexistent a/ directory
     if filename:find("[/\\]") then
         components.showToast("Filename cannot contain / or \\", 3)
         return
     end
-    filename = filename .. ".png" -- 自动补扩展名
+    filename = filename .. ".png" -- append extension automatically
     local lfs = require("libs/libkoreader-lfs")
     local base = DataStorage:getDataDir() .. "/drawingboard"
     if lfs.attributes(base, "mode") ~= "directory" then
@@ -274,14 +274,14 @@ function M:_doSaveFlow(filename)
     end
     local dir = base
     if self.save_folder ~= "" then
-        dir = self.save_folder -- 绝对路径(文件夹浏览器任选;缺失则创建)
+        dir = self.save_folder -- absolute path (any folder from the folder browser; created if missing)
         if lfs.attributes(dir, "mode") ~= "directory" then
             pcall(lfs.mkdir, dir)
         end
     end
     local path = self:_nextSavePath(dir, lfs, filename)
-    -- 延迟到下一帧执行,让保存对话框先关闭;阻塞的裁剪/编码整体包 pcall。
-    -- 失败重试 1 次(0.5s 后):真机 SD 卡偶发繁忙导致首次写盘失败,作品不能因此丢失
+    -- Defer to the next frame so the save dialog closes first; the blocking crop/encode is wrapped in pcall as a whole.
+    -- Retry once on failure (after 0.5s): the real device's SD card is occasionally busy so the first write fails; the work must not be lost because of that
     UIManager:scheduleIn(0.01, function()
         local ok, saved_path = pcall(self._doSave, self, path)
         if ok and saved_path then
@@ -291,7 +291,7 @@ function M:_doSaveFlow(filename)
         end
         self:_log("save failed, retrying", path, ok and "" or tostring(saved_path))
         UIManager:scheduleIn(0.5, function()
-            -- 重试换新路径(首试可能留下 0 字节坏文件)
+            -- Retry with a new path (the first attempt may have left a 0-byte broken file)
             local retry_path = self:_nextSavePath(dir, lfs, filename)
             local ok2, saved2 = pcall(self._doSave, self, retry_path)
             if ok2 and saved2 then
@@ -305,8 +305,8 @@ function M:_doSaveFlow(filename)
     end)
 end
 
--- 生成不冲突的保存路径:重名自动加序号(避免互相覆盖)。
--- filename 缺省为时间戳文件名;测试可注入固定文件名
+-- Generate a non-clashing save path: add a number on name clash (avoids overwriting each other).
+-- filename defaults to a timestamp name; tests can inject a fixed filename
 function M:_nextSavePath(dir, lfs, filename)
     filename = filename or (os.date("drawing_%Y%m%d_%H%M%S") .. ".png")
     if not filename:find("%.png$") then
@@ -322,11 +322,11 @@ function M:_nextSavePath(dir, lfs, filename)
     return path
 end
 
--- 实际编码写入(在延迟任务里执行;同步阻塞但提示已上屏)。
--- 画布恒定全屏(坐标=屏幕坐标),直接保存完整画布 = 设备屏幕分辨率完全一致(不裁剪白边)。
--- 返回保存路径(成功)或 nil(失败);写盘带 pcall,失败不崩溃。
--- v57:写盘后校验 PNG magic——writePNG 内部吞掉 lodepng 错误,仅凭"文件存在"判断
--- 会把 0 字节/半截文件当成功,真机 SD 卡繁忙时尤甚
+-- Actual encode and write (runs in the deferred task; blocks synchronously but the notice is already on screen).
+-- The canvas is always full-screen (coordinates = screen coordinates); saving the whole canvas matches the device screen resolution exactly (no white-margin cropping).
+-- Returns the saved path (success) or nil (failure); the disk write is wrapped in pcall so failure doesn't crash.
+-- v57: verify the PNG magic after writing - writePNG swallows lodepng errors internally, and judging by "file exists" alone
+-- would treat 0-byte/truncated files as success, especially when the real device's SD card is busy
 function M:_doSave(path)
     if not self.canvas_bb then
         return nil
@@ -335,12 +335,12 @@ function M:_doSave(path)
     local ok = pcall(function()
         self.canvas_bb:writePNG(path)
     end)
-    -- writePNG 内部吞掉 lodepng 错误,以文件是否真实生成判断成败
+    -- writePNG swallows lodepng errors internally, so judge success by whether the file was actually created
     local size = ok and lfs.attributes(path, "size")
     if not size then
         return nil
     end
-    -- PNG magic 头 8 字节:137 80 78 71 13 10 26 10;损坏文件(0 字节/半截)在此拦截
+    -- PNG magic is the first 8 bytes: 137 80 78 71 13 10 26 10; corrupt files (0-byte/truncated) are caught here
     local f = io.open(path, "rb")
     if not f then
         return nil
@@ -349,7 +349,7 @@ function M:_doSave(path)
     f:close()
     if magic ~= string.char(137, 80, 78, 71, 13, 10, 26, 10) then
         self:_log("PNG magic mismatch", path, size, "bytes")
-        pcall(os.remove, path) -- 删坏文件,重试路径不会被 _nextSavePath 误判为"已占用"
+        pcall(os.remove, path) -- delete the broken file so _nextSavePath won't mistake the retry path as "taken"
         return nil
     end
     self:_log("saved", path, size, "bytes",
@@ -357,12 +357,12 @@ function M:_doSave(path)
     return path
 end
 
--- ============================ 工程文件(可再编辑)保存/打开 ============================
--- v62d:元素全是纯数据表,序列化成 Lua chunk("return {...}")即工程文件(.drawing):
--- 3 层元素 + 显隐/透明度/当前层。重新打开恢复对象,可继续 移动/变形/改属性/撤销。
+-- ============================ Project file (re-editable) save/open ============================
+-- v62d: elements are all plain data tables; serialised as a Lua chunk ("return {...}") they form the project file (.drawing):
+-- 3 layers of elements + visibility/opacity/current layer. Reopening restores the objects, which can still be moved/transformed/edited/undone.
 
--- 递归序列化(只处理 number/boolean/string/table;下划线开头的私有字段如 _bbox 跳过,
--- 加载后由 _cacheBBox 重算)
+-- Recursive serialisation (handles only number/boolean/string/table; private fields starting with underscore such as _bbox are skipped,
+-- and recomputed by _cacheBBox after loading)
 local function serializeValue(v, out)
     local t = type(v)
     if t == "number" then
@@ -388,7 +388,7 @@ local function serializeValue(v, out)
     end
 end
 
--- 序列化并写入 .drawing 文件(同步小文本写盘,pcall 防权限/SD 忙)
+-- Serialise and write the .drawing file (small synchronous text write, pcall guards against permissions/busy SD)
 function M:_doSaveProject(path)
     local data = {
         version = 1,
@@ -414,7 +414,7 @@ function M:_doSaveProject(path)
     return ok
 end
 
--- 保存工程:对话框(文件名 + 文件夹),确认后写入 .drawing
+-- Save project: dialog (filename + folder); on confirm, write the .drawing file
 function M:_saveProject()
     local has_content = false
     for _, els in ipairs(self.layers) do
@@ -490,7 +490,7 @@ function M:_doSaveProjectFlow(filename)
     if lfs.attributes(dir, "mode") ~= "directory" then
         pcall(lfs.mkdir, dir)
     end
-    -- 重名自动加序号(与 PNG 保存同语义;_nextSavePath 硬编码 .png,这里独立小循环)
+    -- Add a number on name clash (same semantics as PNG save; _nextSavePath hardcodes .png, so a separate small loop here)
     local stem = filename:gsub("%.drawing$", "")
     local path = dir .. "/" .. filename
     local n = 1
@@ -506,7 +506,7 @@ function M:_doSaveProjectFlow(filename)
     end
 end
 
--- 打开工程:浏览器列 .drawing 文件(复用文件夹浏览器),选中即载入
+-- Open project: the browser lists .drawing files (reusing the folder browser); selecting one loads it
 function M:_openProject()
     self:_pickSaveFolder(nil, function(name)
         local dir = (self.save_folder ~= "") and self.save_folder
@@ -515,8 +515,8 @@ function M:_openProject()
     end, "%.drawing$", L.x("打开工程: "))
 end
 
--- 载入 .drawing:原位清空三层 元素/撤销/重做 再插入(保持与 layers_* 的引用绑定,
--- v61p 教训:换新表会切断绑定),恢复 显隐/透明度/当前层,整幅重绘
+-- Load .drawing: clear the three layers' elements/undo/redo in place and then insert (keeps the binding to layers_*;
+-- v61p lesson: swapping in new tables breaks the binding), restore visibility/opacity/current layer, full redraw
 function M:_loadProject(path)
     local lfs = require("libs/libkoreader-lfs")
     if lfs.attributes(path, "mode") ~= "file" then
@@ -550,7 +550,7 @@ function M:_loadProject(path)
         end
         for _, el in ipairs(data.layers[li] or {}) do
             if type(el) == "table" and type(el.kind) == "string" then
-                el._bbox = nil -- 私有字段不序列化,载入后重算
+                el._bbox = nil -- private fields aren't serialised; recomputed after loading
                 table.insert(els, el)
                 self:_cacheBBox(el)
             end
@@ -591,9 +591,9 @@ function M:_loadProject(path)
     self:_log("project loaded", path)
 end
 
--- ============================ 设置持久化 ============================
--- 工具状态设置(灰度/粗细/笔触/模式等)退出前自动写入插件目录 drawingpad_settings.lua,
--- 下次打开自动读取恢复。无插件目录(测试/直接构造)时跳过,静默。
+-- ============================ Settings persistence ============================
+-- Tool state settings (grey/width/brush tip/modes etc.) are auto-written to drawingpad_settings.lua in the plugin directory before exit,
+-- and read back and restored on the next open. Skipped silently when there is no plugin directory (tests/direct construction).
 
 function M:_loadSettings()
     if not self.plugin_path then
@@ -614,9 +614,9 @@ function M:_loadSettings()
             self[k] = v
         end
     end
-    -- 文字内容(上次插入内容)单独存取:_last_text 字段带下划线,不进 SETTING_KEYS 通用循环。
-    -- v57:补全 _last_font/_last_font_size,让"上次文字用的字体"跨重启保留(v52 只存了文字内容,
-    -- 插入模式退到 self.font 工具栏字体而非上次文字字体——重启后用户体感字体变化)。
+    -- Text content (last inserted text) is stored separately: the _last_text field has an underscore, so it isn't in the generic SETTING_KEYS loop.
+    -- v57: also store _last_font/_last_font_size so the "font last used for text" survives restarts (v52 stored only the text content,
+    -- insert mode fell back to the self.font toolbar font instead of the last text font - after a restart the user saw the font change).
     local function readUnderscore(key)
         local v = s:readSetting(key)
         if v ~= nil then
@@ -636,7 +636,7 @@ function M:_saveSettings()
     for _, k in ipairs(const.SETTING_KEYS) do
         self._settings:saveSetting(k, self[k])
     end
-    -- v57:三个下划线字段统一处理(_last_text/_last_font/_last_font_size)
+    -- v57: handle the three underscore fields together (_last_text/_last_font/_last_font_size)
     local function saveUnderscore(key, value)
         if value ~= nil then
             self._settings:saveSetting(key, value)
@@ -649,21 +649,21 @@ function M:_saveSettings()
     self:_log("settings saved", ok)
 end
 
--- ============================ 关闭 ============================
+-- ============================ Close ============================
 
 function M:_onClose()
-    self:_saveSettings() -- 退出前自动保存工具设置到插件目录
+    self:_saveSettings() -- auto-save tool settings to the plugin directory before exit
     local function doClose()
-        -- 显式 full 刷新:关闭全屏画板后确保下层页面完整重绘(plain close 只靠
-        -- 兜底 partial 刷新,墨水屏上不足以清掉上一帧,页面会显得没刷新)
+        -- Explicit full refresh: ensures the underlying page fully redraws after closing the full-screen board (a plain close relies only
+        -- on a fallback partial refresh, which isn't enough on e-ink to clear the previous frame; the page would look unrefreshed)
         UIManager:close(self, "full")
         self:_log("closed")
         if self.on_close then
             self.on_close()
         end
     end
-    -- v61q:任意图层有内容都提示——self.elements 只指向当前层,
-    -- 只查它会漏掉"其他层画过、当前层空白"的未保存内容
+    -- v61q: prompt if any layer has content - self.elements points only to the current layer,
+    -- checking only it would miss unsaved content where "other layers were drawn on but the current layer is blank"
     local has_content = false
     for _, els in ipairs(self.layers) do
         if #els > 0 then
@@ -683,26 +683,26 @@ function M:_onClose()
     end
 end
 
--- 实体键 Back 触发 "Close" 事件 → 走同一套关闭确认
+-- The hardware Back key fires the "Close" event -> goes through the same close confirmation
 function M:onClose()
     self:_onClose()
     return true
 end
 
--- 关闭时释放画布 BlitBuffer(用 pcall 保护,防止关闭流程中崩溃)
+-- Free the canvas BlitBuffer on close (pcall-protected so the close flow can't crash)
 function M:onCloseWidget()
     local ok, err = pcall(function()
-        -- 关闭仍打开的分类面板(退出按钮/物理 Back 等 close 路径都经这里,
-        -- 否则面板残留在窗口栈里,画板关了菜单还挂在屏幕上)
+        -- Close any category panel still open (exit button/physical Back and other close paths all pass through here,
+        -- otherwise the panel stays in the window stack and the menu is left hanging on screen after the board closes)
         if self._category_popup then
-            -- 先清 _open_cat,面板自己的 onCloseWidget 就不会再回调 _refreshToolbar
+            -- Clear _open_cat first so the panel's own onCloseWidget won't call back into _refreshToolbar
             self._open_cat = nil
             UIManager:close(self._category_popup, "full")
             self._category_popup = nil
         end
-        -- 取消所有挂起的定时任务,防止关闭后回调触碰已释放状态
+        -- Cancel all pending scheduled tasks so callbacks can't touch freed state after close
         self:_invalidateTasks()
-        -- 还原手势检测的 PAN_THRESHOLD(画板期间调低过;见 gestures._applyGestureTuning)
+        -- Restore the gesture detector's PAN_THRESHOLD (lowered while the board is open; see gestures._applyGestureTuning)
         self:_restoreGestureTuning()
         self:_cancelShapePreview()
         self._shape_preview_region = nil
@@ -711,8 +711,8 @@ function M:onCloseWidget()
             self.canvas_bb:free()
             self.canvas_bb = nil
         end
-        -- 释放显隐切换的乒乓缓存画面(能力探测:真机曾回滚成没有缓存的旧核心,
-        -- 裸调用会在这里每次关闭都记一条 error,而它已是收尾最后一步、清理早已做完)
+        -- Free the visibility-toggle ping-pong cache image (capability probe: the real device once rolled back to an old core without the cache;
+        -- a bare call would log an error on every close here, though it's the very last step and cleanup is long done)
         if self._invalidateVisCache then
             self:_invalidateVisCache()
         end
