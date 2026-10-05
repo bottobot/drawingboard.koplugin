@@ -39,7 +39,6 @@ local UIManager = require("ui/uimanager")
 local InputContainer = require("ui/widget/container/inputcontainer")
 local logger = require("logger")
 local const = require("drawingpad.const")
-local L = require("drawingpad.i18n")
 
 local DrawingCanvas = InputContainer:extend{
     name = "DrawingCanvas",
@@ -130,10 +129,6 @@ function DrawingCanvas:init()
     self._drag_preview_repaint_fn = nil -- preview follow refresh throttle scheduled-task closure
 
     self:_loadSettings() -- load the last saved tool settings (plugin directory; skipped when there is none)
-
-    -- v62h: language resolution must happen before any UI construction - the menu_lang setting wins, defaulting to auto by system language
-    -- (non-Chinese system language -> English menus). L is the i18n singleton; resolving once applies globally
-    L.resolve(self.menu_lang)
 
     self:_log("init", Screen:getWidth(), "x", Screen:getHeight())
     -- Don't override a font already restored from settings (otherwise the font saved by _loadSettings is replaced by the default); only take the default on first run

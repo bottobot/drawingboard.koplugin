@@ -1,10 +1,10 @@
 --[[--
-滑条触摸区回归测试:showValuePicker 的滑条命中区不得覆盖任何按键。
-背景:旧版 hit_rect 四边各扩 scaleBySize(30),向下溢出压进预设数字按键的触摸区,
-而手势事件按子控件顺序先到滑条层(slider_wrap 在 preset_bt 之前)→ 按键被抢触点
-(用户实测所有属性设置弹窗的数字按键难触控)。修复后向下只扩到与按键的间隙边界。
+Slider touch-area regression test: the slider hit area of showValuePicker must not cover any button.
+Background: the old hit_rect expanded each side by scaleBySize(30), overflowing downwards into the touch area of the preset number buttons,
+and gesture events reach the slider layer first in child order (slider_wrap before preset_bt) -> the slider steals button touches
+(the user found the number buttons of every property settings popup hard to tap). After the fix it only expands downwards to the gap boundary with the buttons.
 
-运行(从 KOReader 根目录):
+Run (from the KOReader root):
     ./koreader-emulator-x86_64-linux-gnu-debug/koreader/luajit plugins/drawingboard.koplugin/drawingpad/test/slider_hit_test.lua
 --]]
 
@@ -34,7 +34,7 @@ local function check(cond, msg)
     end
 end
 
--- 收集 widget 树里的关键控件(只走子控件路径,跳过 show_parent 等回引防环)
+-- Collect the key widgets in the widget tree (child paths only, skipping back-references such as show_parent to avoid cycles)
 local function collect(root)
     local slider_wrap, buttons = nil, {}
     local function visit(w, depth)
@@ -44,7 +44,7 @@ local function collect(root)
         if w.hitRect and w.onTapProgress then
             slider_wrap = w
         end
-        if w.buttons_layout then -- ButtonTable:行数组里是 Button 实例
+        if w.buttons_layout then -- ButtonTable: the row arrays hold Button instances
             for _, row in ipairs(w.buttons_layout) do
                 for _, b in ipairs(row) do
                     buttons[#buttons + 1] = b
@@ -87,7 +87,7 @@ local function section(name, fn)
     end
 end
 
--- 弹出值弹窗(stub show 捕获)并真实 paint(dimen 在 paint 时才更新)
+-- Pop up the value picker (captured by the stubbed show) and really paint it (dimen is only updated at paint time)
 local function buildPicker()
     local captured = {}
     local real_show = UIManager.show
@@ -123,11 +123,11 @@ section("picker 0-100: hit rect covers no button", function()
                 "hit rect overlaps button #" .. i .. " (" .. tostring(b.text) .. ")")
         end
     end
-    -- 修复语义:向下扩展恰好用完间隙(与 3*vertical_large 同量),不再多压按键
+    -- Fixed semantics: the downward expansion uses exactly the gap (same amount as 3*vertical_large), no longer covering buttons
     popup:onCloseWidget()
 end)
 
-section("picker 1-800 (粗细域): hit rect covers no button", function()
+section("picker 1-800 (width range): hit rect covers no button", function()
     local captured = {}
     local real_show = UIManager.show
     UIManager.show = function(ui, w)

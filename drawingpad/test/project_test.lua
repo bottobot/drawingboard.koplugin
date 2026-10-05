@@ -1,10 +1,10 @@
 --[[--
-工程文件(.drawing)保存/加载回归测试(v62d):
-1. 保存含 2 层内容 + 显隐/透明度/当前层 的工程 → 新画布加载 → 元素/属性/像素逐项还原
-2. 撤销栈被清空、私有字段(_bbox)重算
-3. 损坏文件拒绝载入不崩
+Project file (.drawing) save/load regression test (v62d):
+1. Save a project with 2 layers of content + visibility/opacity/current layer -> load into a new canvas -> elements/properties/pixels restored item by item
+2. Undo stacks are cleared, private fields (_bbox) recomputed
+3. Corrupt files are rejected without crashing
 
-运行(从 KOReader 根目录):
+Run (from the KOReader root):
     ./koreader-emulator-x86_64-linux-gnu-debug/koreader/luajit plugins/drawingboard.koplugin/drawingpad/test/project_test.lua
 --]]
 
@@ -44,7 +44,7 @@ local function px(bb, x, y)
     return p and p.a or -1
 end
 
--- 画一笔(带中间点,防退化成墨点)
+-- Draw a stroke (with intermediate points so it doesn't degrade into an ink dot)
 local function stroke(canvas, y)
     canvas:_setTool("brush")
     canvas:onPan(nil, { pos = { x = 80, y = y }, start_pos = { x = 80, y = y } })
@@ -68,27 +68,27 @@ end
 section("save/load roundtrip restores layers, attrs, pixels", function()
     pcall(os.remove, PATH)
     local canvas = newCanvas()
-    -- 中层:半透明笔画
+    -- Middle layer: semi-transparent stroke
     canvas:_setTool("brush")
     canvas.alpha = 0.5
     stroke(canvas, 300)
     check(canvas.layers[2][1] ~= nil, "layer2 stroke committed")
-    -- 下层:黑色笔画;上层留空并隐藏,层透明度调整
+    -- Bottom layer: black stroke; top layer left empty and hidden, layer opacity adjusted
     canvas:_switchLayer(1)
     canvas.alpha = 1.0
     stroke(canvas, 320)
     canvas.layer_alpha[1] = 0.5
     canvas.layer_visible[3] = false
-    canvas:_switchLayer(1) -- 当前层=下层保存
+    canvas:_switchLayer(1) -- save with current layer = bottom
 
     local before = px(canvas.canvas_bb, 150, 300)
 
     check(canvas:_doSaveProject(PATH), "save ok")
     check(lfs.attributes(PATH, "mode") == "file", "file written")
 
-    -- 另一块画布加载
+    -- Load into another canvas
     local c2 = newCanvas()
-    stroke(c2, 500) -- 干扰内容,应被清掉
+    stroke(c2, 500) -- interfering content, should be cleared
     c2:_loadProject(PATH)
     check(#c2.layers[2] == 1 and c2.layers[2][1].kind == "freehand", "layer2 restored")
     check(#c2.layers[1] == 1 and c2.layers[1][1].kind == "freehand", "layer1 restored")
@@ -101,10 +101,10 @@ section("save/load roundtrip restores layers, attrs, pixels", function()
     check(c2.elements == c2.layers[1], "elements rebound to active layer")
     check(#c2.undo == 0 and #c2.redo == 0, "undo/redo stacks reset")
     check(c2.layers[1][1]._bbox ~= nil, "bbox recomputed")
-    -- 像素:半透明笔画在中层、下层 50% 层透明度,加载前后同坐标同灰度
+    -- Pixels: semi-transparent stroke on the middle layer, bottom layer at 50% layer opacity, same grey at the same coordinates before and after loading
     local after = px(c2.canvas_bb, 150, 300)
     check(math.abs(after - before) <= 1, "pixel roundtrip, before " .. before .. " after " .. after)
-    -- 干扰内容被清掉(y=500 处无墨)
+    -- Interfering content was cleared (no ink at y=500)
     check(px(c2.canvas_bb, 150, 500) >= 250, "stale content cleared")
     c2:onCloseWidget()
     canvas:onCloseWidget()
@@ -118,7 +118,7 @@ section("corrupt file rejected", function()
     local canvas = newCanvas()
     local els_before = #canvas.elements
     local vis_before = { canvas.layer_visible[1], canvas.layer_visible[2], canvas.layer_visible[3] }
-    canvas:_loadProject(PATH) -- 不应崩、不应改动状态
+    canvas:_loadProject(PATH) -- must not crash or change state
     check(#canvas.elements == els_before, "elements untouched on corrupt file")
     check(canvas.layer_visible[2] == vis_before[2], "visibility untouched")
     canvas:onCloseWidget()

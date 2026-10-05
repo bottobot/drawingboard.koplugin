@@ -1,19 +1,19 @@
 --[[--
-透明度(alpha)功能单测:
-1. shapes.alphaProxy:白底上混合 ≈α·墨色+(1-α)·底,叠在墨迹上透出下层;越界裁剪安全
-2. drawElement 带 alpha(fill 元素全路径)
-3. 画布集成:半透明实心矩形提交 + 区域重绘(负偏移)前后逐像素一致
-4. 图层系数与元素 alpha 相乘
-5. _resolveAlpha 随机取值范围与分级多样性
-6. _applySelectedAlpha 应用 + 撤销恢复(像素级)
-7. 半透明文字走临时 BB 混合路径:无全黑像素,不透明对照有
-8. 属性面板 alpha_btn(与笔触并排)/ 图层面板 layer_alpha_btn 存在
+Opacity (alpha) feature unit tests:
+1. shapes.alphaProxy: blending on white ≈ α·ink + (1-α)·background, over ink the lower layer shows through; out-of-bounds clipping is safe
+2. drawElement with alpha (full path of the fill element)
+3. Canvas integration: semi-transparent filled rectangle commit + region redraw (negative offset) identical pixel by pixel before and after
+4. Layer factor multiplies element alpha
+5. _resolveAlpha random value range and level diversity
+6. _applySelectedAlpha apply + undo restore (pixel level)
+7. Semi-transparent text goes through the temp BB blend path: no fully black pixels, the opaque control has some
+8. Property panel alpha_btn (next to tip) / layer panel layer_alpha_btn exist
 
-运行(从 KOReader 根目录):
+Run (from the KOReader root):
     ./koreader-emulator-x86_64-linux-gnu-debug/koreader/luajit plugins/drawingboard.koplugin/drawingpad/test/alpha_test.lua
 --]]
 
--- 自定位插件根注入 package.path(与 feature_test 同款)
+-- Self-locate the plugin root and inject package.path (same as feature_test)
 local __t_src = debug.getinfo(1, "S").source
 local __t_dir = __t_src:match("^@(.*)[/\\][^/\\]*$") or "."
 local __t_plugin = __t_dir:match("^(.*)[/\\]drawingpad[/\\]test$") or __t_dir
@@ -23,7 +23,7 @@ end
 
 require("setupkoenv")
 
--- 前置初始化必须早于任何 require("ui/uimanager")/require("device")
+-- Pre-initialisation must happen before any require("ui/uimanager")/require("device")
 G_defaults = require("luadefaults"):open()
 local DataStorage = require("datastorage")
 G_reader_settings = require("luasettings"):open(DataStorage:getDataDir() .. "/settings.reader.lua")
@@ -46,7 +46,7 @@ local function newCanvas()
 end
 
 local function px(bb, x, y)
-    -- 屏幕帧缓冲可能是 ColorRGB32(模拟器)无 .a 字段:灰度内容 r≈g≈b,取 r 当灰度
+    -- The screen framebuffer may be ColorRGB32 (emulator) without an .a field: grey content has r≈g≈b, take r as the grey value
     local p = bb:getPixel(x, y)
     if not p then
         return -1
@@ -75,24 +75,24 @@ local function section(name, fn)
     end
 end
 
--- 1. alphaProxy 基本混合
+-- 1. alphaProxy basic blending
 section("proxy blend on white / over ink / clipping", function()
     local bb = Blitbuffer.new(20, 20, Blitbuffer.TYPE_BB8)
     bb:paintRect(0, 0, 20, 20, Blitbuffer.COLOR_WHITE)
     local proxy = shapes.alphaProxy(bb, 0.5)
-    -- 黑 50% 画白底上半区 → ≈128
+    -- 50% black on the top half of a white background -> ≈128
     proxy:paintRect(0, 0, 20, 10, Blitbuffer.gray(1.0))
     local v = px(bb, 10, 5)
     check(math.abs(v - 128) <= 2, "black 50% over white ~= 128, got " .. v)
-    -- 下半区先铺黑墨,再 50% 黑盖上去 → 透出下层,仍黑
+    -- Lay black ink on the bottom half first, then 50% black over it -> lower layer shows through, still black
     bb:paintRect(0, 10, 20, 10, Blitbuffer.gray(1.0))
     proxy:paintRect(0, 10, 20, 10, Blitbuffer.gray(1.0))
     check(px(bb, 10, 15) <= 4, "50% over black ink stays black, got " .. px(bb, 10, 15))
-    -- 越界区域安全(native paintRect 裁剪):新画布上画越界矩形,只有画布内部分被混合
+    -- Out-of-bounds area is safe (native paintRect clipping): draw an out-of-bounds rectangle on a new canvas, only the in-canvas part is blended
     local bb2 = Blitbuffer.new(10, 10, Blitbuffer.TYPE_BB8)
     bb2:paintRect(0, 0, 10, 10, Blitbuffer.COLOR_WHITE)
     local p2 = shapes.alphaProxy(bb2, 0.5)
-    p2:paintRect(-5, -5, 10, 10, Blitbuffer.gray(1.0)) -- 裁剪后只写 (0..4, 0..4)
+    p2:paintRect(-5, -5, 10, 10, Blitbuffer.gray(1.0)) -- after clipping only (0..4, 0..4) is written
     local cv = px(bb2, 0, 0)
     check(math.abs(cv - 128) <= 2, "clipped paint blends at top-left, got " .. cv)
     check(px(bb2, 8, 8) >= 253, "clipped paint left outside untouched, got " .. px(bb2, 8, 8))
@@ -100,13 +100,13 @@ section("proxy blend on white / over ink / clipping", function()
     bb:free()
 end)
 
--- 2. drawElement 带 alpha(fill 元素全路径)
+-- 2. drawElement with alpha (full path of the fill element)
 section("drawElement fill with alpha", function()
     local bb = Blitbuffer.new(60, 60, Blitbuffer.TYPE_BB8)
     bb:paintRect(0, 0, 60, 60, Blitbuffer.COLOR_WHITE)
-    -- 先铺一条黑竖条 x=0..9
+    -- First lay a black vertical bar x=0..9
     bb:paintRect(0, 0, 10, 60, Blitbuffer.gray(1.0))
-    -- 全幅半透明黑 fill 元素走代理渲染
+    -- A full-width semi-transparent black fill element rendered through the proxy
     local el = { kind = "fill", spans = {}, gray = 1.0, alpha = 0.5 }
     for y = 0, 59 do
         el.spans[#el.spans + 1] = { y, 0, 59 }
@@ -118,7 +118,7 @@ section("drawElement fill with alpha", function()
     bb:free()
 end)
 
--- 3. 画布集成:半透明实心矩形 + 区域重绘一致性
+-- 3. Canvas integration: semi-transparent filled rectangle + region redraw consistency
 section("canvas alpha rect + region redraw identity", function()
     local canvas = newCanvas()
     canvas:_setTool("rect")
@@ -131,7 +131,7 @@ section("canvas alpha rect + region redraw identity", function()
     check(el.alpha == 0.5, "element alpha recorded, got " .. tostring(el.alpha))
     local v = px(canvas.canvas_bb, 150, 340)
     check(math.abs(v - 128) <= 3, "alpha rect center ~= 128, got " .. v)
-    -- 区域重绘(随机小区域)前后逐像素一致
+    -- Region redraw (random small regions) identical pixel by pixel before and after
     local before = px(canvas.canvas_bb, 150, 340)
     canvas:_redrawRegion({ x = 90, y = 290, w = 60, h = 40 })
     check(px(canvas.canvas_bb, 150, 340) == before,
@@ -139,12 +139,12 @@ section("canvas alpha rect + region redraw identity", function()
     canvas:onCloseWidget()
 end)
 
--- 4. 图层系数 × 元素 alpha
+-- 4. Layer factor × element alpha
 section("layer alpha multiply", function()
     local canvas = newCanvas()
     canvas:_setTool("brush")
     canvas.alpha = 1.0
-    canvas.layer_alpha[2] = 0.5 -- 当前层(中层)整体 50%
+    canvas.layer_alpha[2] = 0.5 -- current layer (middle) at 50% overall
     canvas:onTap(nil, { pos = { x = 150, y = 400 } })
     local el = canvas.elements[1]
     check(el.alpha == 1.0, "element alpha untouched")
@@ -153,7 +153,7 @@ section("layer alpha multiply", function()
     canvas:onCloseWidget()
 end)
 
--- 5. _resolveAlpha 随机
+-- 5. _resolveAlpha random
 section("resolve alpha random", function()
     local canvas = newCanvas()
     canvas.alpha_random = true
@@ -176,7 +176,7 @@ section("resolve alpha random", function()
     canvas:onCloseWidget()
 end)
 
--- 6. 选中对象透明度 + 撤销恢复(像素级)
+-- 6. Selected object opacity + undo restore (pixel level)
 section("apply selected alpha + undo", function()
     local canvas = newCanvas()
     canvas:_setTool("brush")
@@ -197,11 +197,11 @@ section("apply selected alpha + undo", function()
     canvas:onCloseWidget()
 end)
 
--- 7. 半透明文字
+-- 7. Semi-transparent text
 section("text alpha path", function()
     local canvas = newCanvas()
     local el = {
-        kind = "text", x = 100, y = 300, text = "测试A",
+        kind = "text", x = 100, y = 300, text = "TestA",
         font = canvas.font, size = 40, gray = 1.0, alpha = 0.5,
     }
     canvas:_cacheBBox(el)
@@ -216,9 +216,9 @@ section("text alpha path", function()
         end
     end
     check(minv > 60, "alpha text has no full-black pixel, min=" .. minv)
-    -- 不透明对照:同位置再画应出现接近全黑的像素(覆盖验证混合路径生效)
+    -- Opaque control: drawing again at the same position should produce near-black pixels (verifies the blend path took effect)
     local el2 = {
-        kind = "text", x = 100, y = 300, text = "测试A",
+        kind = "text", x = 100, y = 300, text = "TestA",
         font = canvas.font, size = 40, gray = 1.0,
     }
     canvas:_drawTextTo(canvas.canvas_bb, el2)
@@ -233,7 +233,7 @@ section("text alpha path", function()
     canvas:onCloseWidget()
 end)
 
--- 8. 面板条目存在(与笔触并排)
+-- 8. Panel items exist (next to tip)
 section("panel entries", function()
     local canvas = newCanvas()
     local bt = canvas:_categoryBt("prop")
@@ -246,25 +246,25 @@ section("panel entries", function()
     canvas:onCloseWidget()
 end)
 
--- 9. 半透明文字拖拽预览画到屏幕 BB(回归:模拟器屏幕帧缓冲是 ColorRGB32,
--- 旧实现 getPixel().a 直接崩——修复后走原生 setPixelBlend,任意 BB 类型正确)
+-- 9. Semi-transparent text drag preview drawn to the screen BB (regression: the emulator's screen framebuffer is ColorRGB32,
+-- the old getPixel().a implementation crashed - after the fix it uses native setPixelBlend, correct for any BB type)
 section("text alpha drag preview on screen bb", function()
     local canvas = newCanvas()
     local el = {
-        kind = "text", x = 100, y = 200, text = "测",
+        kind = "text", x = 100, y = 200, text = "W",
         font = canvas.font, size = 30, gray = 1.0, alpha = 0.5,
     }
     canvas:_cacheBBox(el)
     canvas:_setTool("select")
     canvas._selected = el
     canvas._drag_preview = {
-        kind = "text", x = 130, y = 230, text = "测",
+        kind = "text", x = 130, y = 230, text = "W",
         font = canvas.font, size = 30, gray = 1.0, alpha = 0.5,
     }
     local Screen = require("device").screen
     local ok, err = pcall(function() canvas:paintTo(Screen.bb, 0, 0) end)
     check(ok, "paintTo with alpha text preview on screen bb: " .. tostring(err))
-    -- 预览位置应有墨迹(混合生效,不是画了空气)
+    -- The preview position should have ink (blending took effect, not drawing into thin air)
     local b = el._bbox
     local ink = 0
     for yy = math.floor(b.y0), math.ceil(b.y1) + 60 do

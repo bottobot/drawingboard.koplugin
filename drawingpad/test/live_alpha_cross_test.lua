@@ -1,6 +1,6 @@
 --[[--
-半透明笔迹实时流程复现:笔迹划过已有不透明对象,检查实时合成/收笔后
-画布像素是否存在"矩形马赛克"(笔迹掩码外的像素被改动,或掩码内数值错乱)。
+Reproduces the live flow of a semi-transparent stroke crossing an existing opaque object, checking whether the canvas pixels after live compositing/pen-up
+show a "rectangular mosaic" (pixels outside the stroke mask changed, or values inside the mask garbled).
 --]]
 local __t_src = debug.getinfo(1, "S").source
 local __t_dir = __t_src:match("^@(.*)[/\\][^/\\]*$") or "."
@@ -50,17 +50,17 @@ canvas.layer_visible = { true, true, true }
 canvas.layer_alpha = { 1, 1, 1 }
 canvas:_renderAll()
 
--- 背景对象:不透明黑矩形(笔迹将从中穿过)
+-- Background object: opaque black rectangle (the stroke crosses it)
 local rect_el = { kind = "rect", x0 = 150, y0 = 150, x1 = 450, y1 = 250, width = 2, gray = 1, filled = true, alpha = 1 }
 table.insert(canvas.elements, rect_el)
 canvas:_cacheBBox(rect_el)
 canvas:_redrawRegion({ x = 0, y = 0, w = 600, h = 400 })
 
--- 笔迹数据(水平穿过矩形,横跨白底与黑矩形)
+-- Stroke data (horizontally across the rectangle, spanning white background and black rectangle)
 local pts = {}
 for i = 0, 30 do pts[i + 1] = { x = 100 + i * 15, y = 200 } end
 
--- 实时:分三次追加 + 节流重放(模拟 _extendStroke → _flushStrokeRepaint)
+-- Live: append in three chunks + throttled replay (simulates _extendStroke -> _flushStrokeRepaint)
 canvas.tool = "brush"
 local stroke = { kind = "freehand", points = {}, width = 16, gray = 1, alpha = 0.5, tip = "circle" }
 canvas._stroke = stroke
@@ -72,24 +72,24 @@ for _, p in ipairs(pts) do
 end
 canvas:_flushStrokeRepaint()
 
--- 检查实时画面:掩码外(白底远端/矩形内非笔迹处)不应被改动
+-- Check the live picture: outside the mask (far white background/non-stroke parts inside the rectangle) must be unchanged
 assert_eq('live: white far above stroke', px(canvas.canvas_bb, 200, 100), 255)
 assert_eq('live: rect interior below stroke', px(canvas.canvas_bb, 400, 240), 0)
--- 笔迹中心线:v62s 实时 = 不透明灰度预览(黑);矩形段同样不透明
+-- Stroke centre line: v62s live = opaque grey preview (black); the rectangle segment is opaque too
 assert_eq('live: stroke over white (opaque preview)', px(canvas.canvas_bb, 120, 200), 0)
 assert_eq('live: stroke over rect (opaque preview)', px(canvas.canvas_bb, 300, 200), 0)
--- 掩码边缘外、bbox 内:笔迹上下宽度外(±>8px)应保持背景
+-- Outside the mask edge, inside the bbox: beyond the stroke's vertical width (±>8px) the background must remain
 assert_eq('live: white inside bbox above stroke', px(canvas.canvas_bb, 120, 200 + 12), 255)
 assert_eq('live: rect inside bbox below stroke', px(canvas.canvas_bb, 300, 200 + 12), 0)
 
--- 收笔
+-- Pen-up
 canvas:_finishStroke(pts[#pts].x, pts[#pts].y)
 assert_eq('commit: stroke over white', px(canvas.canvas_bb, 120, 200), 127)
 assert_eq('commit: stroke over rect', px(canvas.canvas_bb, 300, 200), 0)
 assert_eq('commit: white outside stroke', px(canvas.canvas_bb, 120, 200 + 12), 255)
 assert_eq('commit: rect outside stroke', px(canvas.canvas_bb, 300, 200 + 12), 0)
 
--- 全量重放(保存/切层后再现)
+-- Full replay (reproduced after save/layer switch)
 canvas:_renderAll()
 assert_eq('replay: stroke over white', px(canvas.canvas_bb, 120, 200), 127)
 assert_eq('replay: stroke over rect', px(canvas.canvas_bb, 300, 200), 0)

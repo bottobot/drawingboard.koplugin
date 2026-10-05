@@ -24,11 +24,11 @@ end
 
 function DrawingBoard:addToMainMenu(menu_items)
     menu_items.drawingboard = {
-        -- Menu name follows the UI language (the i18n module decides from gettext.current_lang at load time);
+        -- Menu name (the UI is English-only; L.t returns its argument unchanged);
         -- side effect: require adds <koplugin>/drawingpad/?.lua to package.path before
         -- this module can be found - pluginloader already adds <koplugin>/?.lua before dofile(main.lua),
         -- but drawingpad is a subdirectory, so a relative package name here relies on pluginloader's path injection
-        text = L.t("Drawing Board", "绘图板"),
+        text = L.t("Drawing Board"),
         sorting_hint = "more_tools",
         callback = function()
             local DrawingCanvas = require("drawingpad.drawing_canvas")

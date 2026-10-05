@@ -1,6 +1,6 @@
 --[[--
-马赛克定位:多笔半透明/不透明笔迹连续绘制(实时 flush + 收笔),
-每次提交后把画布与"全新整幅重放"的结果逐像素对比,差异即区域重放漂移(矩形马赛克)。
+Mosaic locator: draw several semi-transparent/opaque strokes in a row (live flush + pen-up),
+after each commit compare the canvas pixel by pixel with a "fresh full replay"; any difference is region-replay drift (rectangular mosaic).
 --]]
 local __t_src = debug.getinfo(1, "S").source
 local __t_dir = __t_src:match("^@(.*)[/\\][^/\\]*$") or "."
@@ -28,7 +28,7 @@ canvas.layers = { {}, {}, {} }
 canvas.elements = canvas.layers[2]
 canvas.active_layer = 2
 canvas.layer_visible = { true, true, true }
-canvas.layer_alpha = { 1, 1, 0.25 } -- 与真机一致:上层 25%
+canvas.layer_alpha = { 1, 1, 0.25 } -- same as the real device: top layer 25%
 canvas:_renderAll()
 
 local function snapshot()
@@ -74,7 +74,7 @@ local function diffRects(a, b)
     return n, minx, miny, maxx, maxy
 end
 
--- 模拟一笔:实时 flush 若干次 + 收笔(与 gestures 流程同路径)
+-- Simulate one stroke: several live flushes + pen-up (same path as the gestures flow)
 local function drawStroke(points, attrs, flush_every)
     canvas.tool = attrs.tool or "brush"
     local s = {
@@ -94,7 +94,7 @@ local function drawStroke(points, attrs, flush_every)
         end
     end
     canvas:_finishStroke(points[#points].x, points[#points].y)
-    -- 每笔提交后:画布 vs 整幅重放
+    -- After each stroke commit: canvas vs full replay
     local snap = snapshot()
     local ref = fullReplay()
     local n, x0, y0, x1, y1 = diffRects(snap, ref)
@@ -126,12 +126,12 @@ local function hline(y, x0, x1, step)
     return pts
 end
 
--- 真机同款参数:宽 21-100 随机、灰度随机、alpha、上层 layer_alpha 0.25
+-- Same parameters as the real device: width 21-100 random, grey random, alpha, top layer layer_alpha 0.25
 drawStroke(hline(150, 60, 700, 12), { width = 60, gray = 0.75, alpha = 0.5 }, 4)
 drawStroke(hline(300, 700, 80, -12), { width = 100, gray = 0.3, alpha = 1 }, 5)
 drawStroke(hline(220, 100, 650, 9), { width = 24, gray = 0.5, alpha = 0.35 }, 3)
 drawStroke(hline(420, 650, 120, -11), { width = 90, gray = 0.9, alpha = 0.8 }, 6)
--- 交叉:半透明穿过不透明
+-- Crossing: semi-transparent across opaque
 drawStroke(hline(260, 80, 720, 10), { width = 40, gray = 1, alpha = 0.6 }, 4)
 
 print('DONE')

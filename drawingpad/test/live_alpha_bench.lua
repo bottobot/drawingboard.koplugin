@@ -1,6 +1,6 @@
 --[[--
-半透明笔迹实时代价基准:长笔迹分 10 段计时,验证每次 flush 代价只随"新段"增长、
-与整笔长度无关(旧整笔重放方案为平方增长)。
+Live cost benchmark for semi-transparent strokes: time a long stroke in 10 chunks, verifying that each flush's cost grows only with the "new segments",
+independent of the whole stroke length (the old whole-stroke replay approach grew quadratically).
 --]]
 local __t_src = debug.getinfo(1, "S").source
 local __t_dir = __t_src:match("^@(.*)[/\\][^/\\]*$") or "."
@@ -30,7 +30,7 @@ canvas.layer_visible = { true, true, true }
 canvas.layer_alpha = { 1, 1, 1 }
 canvas:_renderAll()
 
--- 2000 点长蛇形笔迹,width 60, alpha 0.5
+-- 2000-point long serpentine stroke, width 60, alpha 0.5
 local pts = {}
 local x, y = 80, 100
 for i = 1, 2000 do

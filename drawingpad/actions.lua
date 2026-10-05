@@ -211,12 +211,12 @@ function M:_save()
     local function folderLabel()
         local f = self.save_folder
         if f == "" then
-            return L.t("Folder: root", "文件夹: 根目录")
+            return L.t("Folder: root")
         end
         if #f > 26 then
             f = "…" .. f:sub(-24) -- truncate long absolute paths for display (limited button space)
         end
-        return L.t("Folder: ", "文件夹: ") .. f
+        return L.t("Folder: ") .. f
     end
     local function updateFolderLabel()
         local btn = dlg.button_table and dlg.button_table.button_by_id
@@ -227,7 +227,7 @@ function M:_save()
         end
     end
     dlg = InputDialog:new{
-        title = L.x("保存 PNG"),
+        title = L.x("Save PNG"),
         input = os.date("drawing_%Y%m%d_%H%M%S"),
         input_hint = L.x("Filename(auto .png)"),
         buttons = {
@@ -431,12 +431,12 @@ function M:_saveProject()
     local function folderLabel()
         local f = self.save_folder
         if f == "" then
-            return L.t("Folder: root", "文件夹: 根目录")
+            return L.t("Folder: root")
         end
         if #f > 26 then
             f = "…" .. f:sub(-24)
         end
-        return L.t("Folder: ", "文件夹: ") .. f
+        return L.t("Folder: ") .. f
     end
     local function updateFolderLabel()
         local btn = dlg.button_table and dlg.button_table.button_by_id
@@ -447,9 +447,9 @@ function M:_saveProject()
         end
     end
     dlg = InputDialog:new{
-        title = L.x("保存工程(可再编辑)"),
+        title = L.x("Save project(editable)"),
         input = os.date("drawing_%Y%m%d_%H%M%S"),
-        input_hint = L.x("文件名(自动补 .drawing)"),
+        input_hint = L.x("Filename(auto .drawing)"),
         buttons = {
             {
                 { id = "folder_btn", text = folderLabel(),
@@ -512,7 +512,7 @@ function M:_openProject()
         local dir = (self.save_folder ~= "") and self.save_folder
             or (DataStorage:getDataDir() .. "/drawingboard")
         self:_loadProject(dir .. "/" .. name .. ".drawing")
-    end, "%.drawing$", L.x("打开工程: "))
+    end, "%.drawing$", L.x("Open project: "))
 end
 
 -- Load .drawing: clear the three layers' elements/undo/redo in place and then insert (keeps the binding to layers_*;

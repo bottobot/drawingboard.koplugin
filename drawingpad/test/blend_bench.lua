@@ -1,7 +1,7 @@
 --[[--
-混合模式重放代价基准:模拟"多层半透明 multiply/dodge 叠加后收笔",
-对 N 个相交元素做 _redrawRegion(收笔/撤销/移动预览的真实路径),计时对比。
-运行(从 KOReader 模拟器根目录):
+Blend-mode replay cost benchmark: simulates "pen-up after stacking many semi-transparent multiply/dodge layers",
+runs _redrawRegion over N intersecting elements (the real path of pen-up/undo/move preview) and compares timings.
+Run (from the KOReader emulator root):
     ./luajit plugins/drawingboard.koplugin/drawingpad/test/blend_bench.lua
 --]]
 local __t_src = debug.getinfo(1, "S").source
@@ -23,7 +23,7 @@ local DrawingCanvas = require("drawingpad.drawing_canvas")
 
 local W, H = 1072, 1448
 local NLAYERS = 8
-local RECT = 400 -- 每个元素 400×400,相邻错开 150px(大面积相交)
+local RECT = 400 -- each element 400x400, neighbours offset by 150px (large intersecting areas)
 
 local function bench(mode)
     local canvas = DrawingCanvas:new{ on_close = function() end }
@@ -36,7 +36,7 @@ local function bench(mode)
     canvas.layer_visible = { true, true, true }
     canvas.layer_alpha = { 1, 1, 1 }
     canvas:_renderAll()
-    -- N 层实心矩形,依次错开(后续层压在前层上,模拟叠加)
+    -- N layers of filled rectangles, offset in turn (later layers on top of earlier ones, simulating stacking)
     for i = 1, NLAYERS do
         local x0 = 60 + (i - 1) * 130
         local el = { kind = "rect", x0 = x0, y0 = 80, x1 = x0 + RECT, y1 = 80 + RECT,
@@ -45,9 +45,9 @@ local function bench(mode)
         table.insert(canvas.elements, el)
         shapes.drawElement(canvas:_alphaBB(canvas.canvas_bb, el), el, Blitbuffer.gray(el.gray))
     end
-    -- 重放整块相交区域(收笔 _redrawRegion 的真实路径)
+    -- Replay the whole intersecting area (the real path of the pen-up _redrawRegion)
     local region = { x = 60, y = 80, w = 60 + (NLAYERS - 1) * 130 + RECT - 60, h = RECT }
-    -- 预热一次(JIT 编译)
+    -- Warm up once (JIT compilation)
     canvas:_redrawRegion(region)
     local t0 = os.clock()
     local REP = 3
@@ -55,7 +55,7 @@ local function bench(mode)
         canvas:_redrawRegion(region)
     end
     local dt = (os.clock() - t0) * 1000 / REP
-    print(string.format("BLEND-BENCH %s: redrawRegion(%d 层相交) = %.1f ms", mode, NLAYERS, dt))
+    print(string.format("BLEND-BENCH %s: redrawRegion(%d intersecting layers) = %.1f ms", mode, NLAYERS, dt))
     canvas.canvas_bb:free()
     canvas:onCloseWidget()
     return dt

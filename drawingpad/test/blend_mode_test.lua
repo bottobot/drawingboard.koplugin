@@ -1,19 +1,19 @@
 --[[--
-透明度混合模式(blend mode)单测:
-1. shapes.blendModePixel 三模式公式(normal/multiply/dodge)
-2. shapes.alphaProxy 带 mode:白底/叠墨/越界裁剪
-3. 画布集成:multiply 两笔 50% 黑矩形重叠处比 normal 更深(叠墨互乘)
-4. 混合模式随元素持久:画布切回 normal 后区域重绘,旧元素仍按 multiply 复现;
-   新元素按 normal 混合
-5. dodge:中灰 50% 叠在暗底上比 normal 提亮;黑墨 dodge 不改变底色
-6. 透明度设置弹窗含混合模式键,点击循环 正常→正片叠底→线性减淡→正常
-7. const.SETTING_KEYS 含 alpha_blend(退出持久化)
+Opacity blend mode unit tests:
+1. shapes.blendModePixel formulas for the three modes (normal/multiply/dodge)
+2. shapes.alphaProxy with mode: white background/over ink/out-of-bounds clipping
+3. Canvas integration: where two 50% black multiply rectangles overlap it is darker than normal (stacked ink multiplies)
+4. Blend mode persists with the element: after the canvas switches back to normal and a region is redrawn, old elements still reproduce as multiply;
+   new elements blend as normal
+5. dodge: mid-grey 50% over a dark background is lighter than normal; black ink dodge doesn't change the background
+6. The opacity settings popup has a blend mode key; tapping cycles Normal -> Multiply -> Dodge -> Normal
+7. const.SETTING_KEYS contains alpha_blend (persisted on exit)
 
-运行(从 KOReader 根目录):
+Run (from the KOReader root):
     ./koreader-emulator-x86_64-linux-gnu-debug/koreader/luajit plugins/drawingboard.koplugin/drawingpad/test/blend_mode_test.lua
 --]]
 
--- 自定位插件根注入 package.path(与 feature_test 同款)
+-- Self-locate the plugin root and inject package.path (same as feature_test)
 local __t_src = debug.getinfo(1, "S").source
 local __t_dir = __t_src:match("^@(.*)[/\\][^/\\]*$") or "."
 local __t_plugin = __t_dir:match("^(.*)[/\\]drawingpad[/\\]test$") or __t_dir
@@ -23,7 +23,7 @@ end
 
 require("setupkoenv")
 
--- 前置初始化必须早于任何 require("ui/uimanager")/require("device")
+-- Pre-initialisation must happen before any require("ui/uimanager")/require("device")
 G_defaults = require("luadefaults"):open()
 local DataStorage = require("datastorage")
 G_reader_settings = require("luasettings"):open(DataStorage:getDataDir() .. "/settings.reader.lua")
@@ -75,7 +75,7 @@ local function section(name, fn)
     end
 end
 
--- 1. blendModePixel 公式
+-- 1. blendModePixel formulas
 section("blendModePixel formulas", function()
     local bb = Blitbuffer.new(4, 4, Blitbuffer.TYPE_BB8)
     -- normal: out = d + a·(ink-d) —— d=100, ink=0, a=128 → ≈50
@@ -90,18 +90,18 @@ section("blendModePixel formulas", function()
     bb:setPixel(2, 0, Blitbuffer.Color8(64))
     shapes.blendModePixel(bb, 2, 0, 128, 128, "dodge")
     check(math.abs(px(bb, 2, 0) - 128) <= 1, "dodge d64 ink128 a50% ~= 128, got " .. px(bb, 2, 0))
-    -- dodge 黑墨不改底色:d=200, ink=0 → 200
+    -- dodge with black ink doesn't change the background: d=200, ink=0 -> 200
     bb:setPixel(3, 0, Blitbuffer.Color8(200))
     shapes.blendModePixel(bb, 3, 0, 0, 128, "dodge")
     check(px(bb, 3, 0) == 200, "dodge black ink keeps dest, got " .. px(bb, 3, 0))
-    -- 未知模式按 normal 处理(不崩)
+    -- Unknown modes are treated as normal (no crash)
     bb:setPixel(0, 1, Blitbuffer.Color8(100))
     shapes.blendModePixel(bb, 0, 1, 0, 128, "bogus")
     check(math.abs(px(bb, 0, 1) - 50) <= 1, "unknown mode falls back to normal, got " .. px(bb, 0, 1))
     bb:free()
 end)
 
--- 1b. LUT 与 blendModePixel 公式 256 全值一致(快路等价性)
+-- 1b. LUT identical to the blendModePixel formula for all 256 values (fast path equivalence)
 section("blend LUT matches blendModePixel for all dest", function()
     for _, mode in ipairs{ "normal", "multiply", "dodge" } do
         for _, ink in ipairs{ 0, 1, 64, 128, 254, 255 } do
@@ -124,26 +124,26 @@ section("blend LUT matches blendModePixel for all dest", function()
     end
 end)
 
--- 2. alphaProxy 带 mode
+-- 2. alphaProxy with mode
 section("alphaProxy multiply/dodge over white & ink", function()
     local bb = Blitbuffer.new(30, 10, Blitbuffer.TYPE_BB8)
     bb:paintRect(0, 0, 30, 10, Blitbuffer.COLOR_WHITE)
-    -- multiply 黑 50% 画白底 = 与 normal 相同(白是乘法单位元)
+    -- multiply 50% black on white = same as normal (white is the multiplicative identity)
     local pm = shapes.alphaProxy(bb, 0.5, "multiply")
     pm:paintRect(0, 0, 10, 10, Blitbuffer.gray(1.0))
     check(math.abs(px(bb, 5, 5) - 128) <= 2, "multiply black 50% on white ~= 128, got " .. px(bb, 5, 5))
-    -- multiply 中灰 50% 画白底 = (1-a)·255 + a·ink ≈ 191(乘法只在叠墨时体现差异)
+    -- multiply mid-grey 50% on white = (1-a)·255 + a·ink ≈ 191 (multiply only differs over ink)
     pm:paintRect(10, 0, 10, 10, Blitbuffer.gray(0.5))
     check(math.abs(px(bb, 15, 5) - 191) <= 2, "multiply midgray 50% on white ~= 191, got " .. px(bb, 15, 5))
-    -- dodge 中灰 50% 画白底 = 白(128+255 截断 255,再与白混合仍白)
+    -- dodge mid-grey 50% on white = white (128+255 clamps to 255, blended with white stays white)
     local pd = shapes.alphaProxy(bb, 0.5, "dodge")
     pd:paintRect(20, 0, 10, 10, Blitbuffer.gray(0.5))
     check(px(bb, 25, 5) >= 253, "dodge midgray on white stays white, got " .. px(bb, 25, 5))
-    -- 叠墨:multiply 中灰 50% 叠在 d=64 上 → 64·(1-0.5·127/255) ≈ 48(normal 会是 96)
+    -- Over ink: multiply mid-grey 50% over d=64 -> 64·(1-0.5·127/255) ≈ 48 (normal would be 96)
     bb:paintRect(10, 0, 10, 10, Blitbuffer.Color8(64))
     pm:paintRect(10, 0, 10, 10, Blitbuffer.gray(0.5))
     check(math.abs(px(bb, 15, 5) - 48) <= 2, "multiply midgray over 64 ~= 48, got " .. px(bb, 15, 5))
-    -- 越界裁剪安全(paintRect 原生裁剪后 setter 只收画布内坐标)
+    -- Out-of-bounds clipping is safe (after native paintRect clipping the setter only receives in-canvas coordinates)
     local bb2 = Blitbuffer.new(10, 10, Blitbuffer.TYPE_BB8)
     bb2:paintRect(0, 0, 10, 10, Blitbuffer.COLOR_WHITE)
     local p2 = shapes.alphaProxy(bb2, 0.5, "multiply")
@@ -154,7 +154,7 @@ section("alphaProxy multiply/dodge over white & ink", function()
     bb:free()
 end)
 
--- 3. 画布集成:multiply 两笔 50% 黑矩形,重叠处 64(normal 下仍是 128)
+-- 3. Canvas integration: two 50% black multiply rectangles, overlap = 64 (still 128 under normal)
 section("canvas multiply rects overlap darker", function()
     local canvas = newCanvas()
     canvas:_setTool("rect")
@@ -168,14 +168,14 @@ section("canvas multiply rects overlap darker", function()
     canvas:onPanRelease(nil, { pos = { x = 250, y = 350 } })
     check(#canvas.elements == 2, "two rects committed, got " .. #canvas.elements)
     check(canvas.elements[1].blend == "multiply", "blend recorded on element")
-    local v_single = px(canvas.canvas_bb, 120, 220) -- 只在第一笔内
-    local v_overlap = px(canvas.canvas_bb, 175, 275) -- 两笔重叠
+    local v_single = px(canvas.canvas_bb, 120, 220) -- only inside the first rectangle
+    local v_overlap = px(canvas.canvas_bb, 175, 275) -- where both overlap
     check(math.abs(v_single - 128) <= 2, "single rect ~128, got " .. v_single)
     check(math.abs(v_overlap - 64) <= 2, "multiply overlap ~64, got " .. v_overlap)
     canvas:onCloseWidget()
 end)
 
--- 4. 混合模式随元素持久(重绘复现)+ 新元素按当前设置
+-- 4. Blend mode persists with the element (reproduced on redraw) + new elements use the current setting
 section("blend persists per element across redraw", function()
     local canvas = newCanvas()
     canvas:_setTool("rect")
@@ -186,14 +186,14 @@ section("blend persists per element across redraw", function()
     canvas:onPan(nil, { pos = { x = 100, y = 200 }, start_pos = { x = 100, y = 200 } })
     canvas:onPanRelease(nil, { pos = { x = 200, y = 300 } })
     local el = canvas.elements[1]
-    -- 切回 normal,整区域白刷重绘:multiply 元素必须按原样复现(白底上仍 ~128)
+    -- Switch back to normal, white-out and redraw the whole region: the multiply element must reproduce as before (still ~128 on white)
     canvas.alpha_blend = "normal"
     local reg = canvas:_elementRegion(el)
     canvas:_redrawRegion(reg)
     local v = px(canvas.canvas_bb, 150, 250)
     check(math.abs(v - 128) <= 2, "multiply element reproduced after redraw, got " .. v)
-    -- 新元素 normal 模式中灰 50% 叠在其上:out = 0.5·128 + 0.5·128 = 128;
-    -- 若错误沿用 multiply 会是 64
+    -- A new normal-mode mid-grey 50% element on top: out = 0.5·128 + 0.5·128 = 128;
+    -- if it wrongly kept multiply it would be 64
     canvas.gray = 0.5
     canvas:onPan(nil, { pos = { x = 130, y = 230 }, start_pos = { x = 130, y = 230 } })
     canvas:onPanRelease(nil, { pos = { x = 180, y = 280 } })
@@ -203,17 +203,17 @@ section("blend persists per element across redraw", function()
     canvas:onCloseWidget()
 end)
 
--- 5. dodge 提亮:multiple 暗底 d≈64 上中灰 50% → ≈128(normal 是 96)
+-- 5. dodge lightens: mid-grey 50% over a dark background d≈64 -> ≈128 (normal is 96)
 section("canvas dodge lightens over dark ink", function()
     local canvas = newCanvas()
     canvas:_setTool("rect")
-    -- 底:不透明深灰 d≈64
+    -- Bottom: opaque dark grey d≈64
     canvas.alpha = 1.0
     canvas.gray = 0.75
     canvas.rect_filled = true
     canvas:onPan(nil, { pos = { x = 100, y = 200 }, start_pos = { x = 100, y = 200 } })
     canvas:onPanRelease(nil, { pos = { x = 200, y = 300 } })
-    -- 上:线性减淡 中灰 50%
+    -- Top: linear dodge mid-grey 50%
     canvas.alpha = 0.5
     canvas.alpha_blend = "dodge"
     canvas.gray = 0.5
@@ -224,7 +224,7 @@ section("canvas dodge lightens over dark ink", function()
     canvas:onCloseWidget()
 end)
 
--- 6. 设置弹窗混合模式行:存在 + 循环切换
+-- 6. Blend mode row in the settings popup: exists + cycles
 section("alpha dialog blend mode row cycles", function()
     local canvas = newCanvas()
     check(canvas.alpha_blend == "normal", "default blend is normal")
@@ -239,7 +239,7 @@ section("alpha dialog blend mode row cycles", function()
     local mode_btn = captured[3][1]
     check(mode_btn.id == "alpha_blend_btn", "3rd row is blend button, got " .. tostring(mode_btn.id))
     local txt = mode_btn.text or ""
-    check(txt:find("Blend") or txt:find("混合"), "blend button label, got " .. txt)
+    check(txt:find("Blend"), "blend button label, got " .. txt)
     mode_btn.callback()
     check(canvas.alpha_blend == "multiply", "cycle 1 -> multiply, got " .. tostring(canvas.alpha_blend))
     mode_btn.callback()
@@ -249,7 +249,7 @@ section("alpha dialog blend mode row cycles", function()
     canvas:onCloseWidget()
 end)
 
--- 7. 持久化键
+-- 7. Persisted key
 section("SETTING_KEYS has alpha_blend", function()
     local found = false
     for _, k in ipairs(const.SETTING_KEYS) do
@@ -261,10 +261,10 @@ section("SETTING_KEYS has alpha_blend", function()
     check(found, "alpha_blend not in SETTING_KEYS")
 end)
 
--- 7b. 粗斜线笔尖半透明不被裁(回归:tmp pad 只算 0.5w 时 slash 笔尖四角被切)
+-- 7b. Semi-transparent wide slash tips are not clipped (regression: when the tmp pad only counted 0.5w the slash tip corners were cut off)
 section("thick slash tip not clipped in alpha compositing", function()
-    -- slash 笔尖半径 = 0.707w + 条带 t/2(max(2,w/3)) ≈ 0.87w;w=100 → 87px,
-    -- 旧 pad(52px)会把超出部分裁掉 → 半透明墨迹 bbox 比近不透明小 30+px
+    -- slash tip radius = 0.707w + strip t/2 (max(2,w/3)) ≈ 0.87w; w=100 -> 87px,
+    -- the old pad (52px) clipped the excess -> the semi-transparent ink bbox was 30+px smaller than the near-opaque one
     local function inkBBox(alpha)
         local bb = Blitbuffer.new(300, 300, Blitbuffer.TYPE_BB8)
         bb:paintRect(0, 0, 300, 300, Blitbuffer.COLOR_WHITE)
@@ -285,18 +285,18 @@ section("thick slash tip not clipped in alpha compositing", function()
         bb:free()
         return x0, y0, x1, y1
     end
-    local ox0, oy0, ox1, oy1 = inkBBox(0.99) -- a255=252,仍走 tmp 单次合成,近不透明
+    local ox0, oy0, ox1, oy1 = inkBBox(0.99) -- a255=252, still goes through the tmp single-pass composite, near opaque
     local ax0, ay0, ax1, ay1 = inkBBox(0.5)
     check(math.abs(ax0 - ox0) <= 2 and math.abs(ay0 - oy0) <= 2
         and math.abs(ax1 - ox1) <= 2 and math.abs(ay1 - oy1) <= 2,
         string.format("slash ink bbox: alpha0.99=(%d,%d,%d,%d) alpha0.5=(%d,%d,%d,%d)",
             ox0, oy0, ox1, oy1, ax0, ay0, ax1, ay1))
-    -- 笔尖确实超出 0.5w pad(否则此测试测不到旧 bug)
+    -- The tip really extends beyond the 0.5w pad (otherwise this test couldn't catch the old bug)
     check(150 - ox0 > 60 and ox1 - 150 > 60 and 150 - oy0 > 60 and oy1 - 150 > 60,
         string.format("slash tip extends beyond 0.5w, got bbox (%d,%d,%d,%d)", ox0, oy0, ox1, oy1))
 end)
 
--- 8. 透明度弹窗真实 paint(坑 14c:构造 OK 但 paint 崩的布局问题测不出来)
+-- 8. Opacity popup real paint (pitfall 14c: layout problems that construct OK but crash on paint can't be caught otherwise)
 section("alpha dialog real paint with blend row", function()
     local canvas = newCanvas()
     local UIManager = require("ui/uimanager")
