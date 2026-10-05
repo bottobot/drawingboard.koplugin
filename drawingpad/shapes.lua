@@ -5,7 +5,9 @@ Depends only on BlitBuffer's paintRect/getWidth/getHeight, not on the UI, so it 
 Line drawing = interpolate between adjacent points + stamp the brush tip shape per point (see shapes.tip), regardless of whether BlitBuffer has drawLine.
 
 Element structure (used for drawElement dispatch):
-- freehand / eraser: { kind, points = {{x,y},...}, width, tip? }
+- freehand / eraser: { kind, points = {{x,y,f?},...}, width, tip? }
+  (Kobo fork: optional per-point f = pen pressure width factor 0.3..1; rendered width = max(1, round(width * f)).
+   el.width stays the maximum, so bounding boxes/hit tests stay conservative. Finger strokes have no f.)
 - line:            { kind, x0, y0, x1, y1, width, tip? }
 - rect:            { kind, x0, y0, x1, y1, width, filled? }
 - circle:          { kind, cx, cy, r, width, filled? }
@@ -236,6 +238,14 @@ function shapes.thickLine(bb, x0, y0, x1, y1, width, color, tip)
     shapes.thickLineFill(bb, x0, y0, x1, y1, width, color)
 end
 
+-- Kobo fork: effective width at a stroke point (pen pressure factor p.f, nil = uniform width)
+function shapes.pointWidth(width, p)
+    if p and p.f then
+        return math.max(1, math.floor(width * p.f + 0.5))
+    end
+    return width
+end
+
 -- Catmull-Rom spline segment P1→P2 (interpolating through points, tangent-continuous): P0/P3 are the neighbours on each side and set the end tangents;
 -- outside the ends the adjacent point is duplicated (P0=P1 or P3=P2). Sampled at ~2px arc length into short thickLines
 -- (round tips keep segments seamless). Compared with midpoint quadratic curves (approximately a quadratic B-spline, which cuts corners at every sample point),
@@ -246,6 +256,9 @@ function shapes.crSegment(bb, p0, p1, p2, p3, width, color, tip)
     local steps = math.max(2, math.min(64, math.floor(approx / 2)))
     local px = math.floor(p1.x)
     local py = math.floor(p1.y)
+    -- Kobo fork: pressure strokes interpolate the width from P1 to P2 (both nil = constant width, unchanged behaviour)
+    local w1 = shapes.pointWidth(width, p1)
+    local w2 = shapes.pointWidth(width, p2)
     for i = 1, steps do
         local t = i / steps
         local t2 = t * t
@@ -257,7 +270,13 @@ function shapes.crSegment(bb, p0, p1, p2, p3, width, color, tip)
             + (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * t2
             + (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * t3))
         if qx ~= px or qy ~= py then
-            shapes.thickLine(bb, px, py, qx, qy, width, color, tip)
+            local w = width
+            if w1 ~= w2 then
+                w = math.floor(w1 + (w2 - w1) * t + 0.5)
+            elseif w1 ~= width then
+                w = w1
+            end
+            shapes.thickLine(bb, px, py, qx, qy, w, color, tip)
             px, py = qx, qy
         end
     end
@@ -274,11 +293,11 @@ function shapes.polyline(bb, points, width, color, ox, oy, tip)
     local n = #points
     if n == 0 then return end
     if n == 1 then
-        shapes.tip(bb, points[1].x + ox, points[1].y + oy, width, color, tip)
+        shapes.tip(bb, points[1].x + ox, points[1].y + oy, shapes.pointWidth(width, points[1]), color, tip)
         return
     end
     -- Start-point tip (full width: full width from pen-down, so small arcs at the start are clearly visible)
-    shapes.tip(bb, points[1].x + ox, points[1].y + oy, width, color, tip)
+    shapes.tip(bb, points[1].x + ox, points[1].y + oy, shapes.pointWidth(width, points[1]), color, tip)
     for i = 1, n - 1 do
         local p0 = points[math.max(1, i - 1)]
         local p1 = points[i]
@@ -286,8 +305,8 @@ function shapes.polyline(bb, points, width, color, ox, oy, tip)
         local p3 = points[math.min(n, i + 2)]
         shapes.crSegment(bb,
             { x = p0.x + ox, y = p0.y + oy },
-            { x = p1.x + ox, y = p1.y + oy },
-            { x = p2.x + ox, y = p2.y + oy },
+            { x = p1.x + ox, y = p1.y + oy, f = p1.f },
+            { x = p2.x + ox, y = p2.y + oy, f = p2.f },
             { x = p3.x + ox, y = p3.y + oy },
             width, color, tip)
     end

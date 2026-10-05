@@ -345,6 +345,17 @@ local TOGGLE_BUTTONS = {
       on_hold = function(s) s:_toggleAlphaRandom() end },
     { id = "tip_btn",   cat = "prop", label = "Tip",
       on_tap = function(s) s:_showTipMenu() end },
+    -- Kobo fork (stylus.lua): pen settings; the two toggles keep the panel open so the new state is visible
+    { id = "pressure_btn", cat = "prop", close_on_tap = false,
+      text_fn = function(s)
+          return L.t("Pressure sensitivity ") .. ((s.pressure_sensitive ~= false) and "☑" or "☐")
+      end,
+      on_tap = function(s) s:_toggleStylusPressure() end },
+    { id = "finger_btn", cat = "prop", close_on_tap = false,
+      text_fn = function(s) return s:_fingerDrawLabel() end,
+      on_tap = function(s) s:_cycleFingerDraw() end },
+    { id = "export_folder_btn", cat = "prop", label = "Export folder", close_on_tap = true,
+      on_tap = function(s) s:_pickExportFolder() end },
     -- Layer items (v59f: one item per layer - ●current layer + ☐/☑hidden; tap = switch to and select the layer, long-press = toggle hidden)
     { id = "layer3_btn", cat = "layer", close_on_tap = false,
       text_fn = function(s)
@@ -1688,7 +1699,8 @@ function M:_showAbout()
         line(L.t("Version:") .. const.PLUGIN_VERSION),
         line(L.t("Author:") .. const.PLUGIN_AUTHOR),
         line("GitHub: https://github.com/eznas"),
-        line(L.t("Save to: koreader/drawingboard/")),
+        line(L.t("Export to: ") .. (self._exportFolder and self:_exportFolder() or "koreader/drawingboard/")),
+        line(L.t("Kobo fork: stylus support, English-only UI (2026-10)")),
     }
     self._about_popup = components.showCenteredDialog{
         name = "DrawingAbout",

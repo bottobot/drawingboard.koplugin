@@ -79,7 +79,7 @@ function M:_renderStrokeTail(s)
         -- setDirty(partial, nil) = full-screen refresh = flash on fast pen-down (slow pen-down goes through onHold,
         -- which has an `if rx0 then` guard, so no flash)
         s._tip_drawn = true
-        shapes.tip(pbb, pts[1].x, pts[1].y, s.width, gray, s.tip)
+        shapes.tip(pbb, pts[1].x, pts[1].y, shapes.pointWidth(s.width, pts[1]), gray, s.tip)
         minx, maxx = pts[1].x, pts[1].x
         miny, maxy = pts[1].y, pts[1].y
     end
@@ -137,7 +137,8 @@ function M:_renderStrokeClose(s)
 end
 
 -- Append a point and incrementally draw the new segment (straight into the canvas BB; it belongs to the "in-progress" stroke until pen-up)
-function M:_extendStroke(x, y)
+-- Kobo fork: optional f = pen pressure width factor stored on the point (nil for finger strokes)
+function M:_extendStroke(x, y, f)
     local s = self._stroke
     if not s then
         return
@@ -156,7 +157,7 @@ function M:_extendStroke(x, y)
     if last and math.abs(last.x - x) < min_step and math.abs(last.y - y) < min_step then
         return
     end
-    table.insert(pts, { x = x, y = y })
+    table.insert(pts, { x = x, y = y, f = f })
     local rx0, ry0, rx1, ry1 = self:_renderStrokeTail()
     if not rx0 then
         return
@@ -167,8 +168,9 @@ function M:_extendStroke(x, y)
         self:_dirtyRegion(rx0, ry0, rx1, ry1, s.width + 2))
     if not self._stroke_repaint_pending then
         self._stroke_repaint_pending = true
-        local interval = (s.width >= const.THICK_WIDTH)
-            and const.THICK_REFRESH_INTERVAL or const.STROKE_REFRESH_INTERVAL
+        -- Kobo fork: a live pen stroke (stylus.lua) sets its own shorter throttle window
+        local interval = self._live_refresh_interval or ((s.width >= const.THICK_WIDTH)
+            and const.THICK_REFRESH_INTERVAL or const.STROKE_REFRESH_INTERVAL)
         -- Store the closure reference: scheduleIn returns nil so there is no handle, unschedule cancels by closure reference,
         -- and on close/tool switch _invalidateTasks unschedules the same closure to invalidate the task
         local fn = function()
@@ -235,7 +237,11 @@ function M:_flushStrokeRepaint()
     end
     -- v62s: the opaque preview for live semi-transparent strokes needs no throttle callback intervention (drawn incrementally into the canvas like opaque strokes);
     -- on pen-up the whole-stroke region replay uniformly corrects it to semi-transparent
-    UIManager:setDirty(self, "partial", reg)
+    -- Kobo fork: a live pen stroke uses the fastest waveform ("fast") and lets paintTo blit only this region (see stylus.lua)
+    if self._live_refresh_mode then
+        self._pen_clip_paint = self:_mergeRegions(self._pen_clip_paint, reg)
+    end
+    UIManager:setDirty(self, self._live_refresh_mode or "partial", reg)
 end
 
 -- Thinning: when the point count exceeds MAX_STROKE_POINTS, keep points evenly (keeping first and last).

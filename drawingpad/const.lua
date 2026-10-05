@@ -85,6 +85,25 @@ local UNDO_LIMIT = 100
 -- dense points within 1px; after capping, per-stroke memory and eraser/save scan costs are bounded, so long sessions no longer scale linearly
 local MAX_STROKE_POINTS = 4096
 
+-- ============================ Kobo stylus (stylus.lua, Kobo fork) ============================
+-- Live pen stroke: throttle window (seconds) of the dirty-rectangle refresh and its waveform. "fast" is the fastest
+-- greyscale-capable mode of UIManager (refresh_modes: a2 < fast < ui < partial ...); "a2" is faster but 1-bit and ghosts badly.
+local STYLUS_REFRESH_INTERVAL = 0.04
+local STYLUS_LIVE_REFRESH_MODE = "fast"
+-- Pen-up: one refresh of the whole stroke bounding box with this (quality) mode
+local STYLUS_FINAL_REFRESH_MODE = "ui"
+-- While a pen stroke is live, paintTo only re-blits the dirty rectangle instead of the whole canvas (false = always full blit)
+local STYLUS_CLIP_PAINT = true
+-- Palm rejection: finger gestures on the canvas are ignored for this long after any pen activity (hover included)
+local STYLUS_PALM_WINDOW_MS = 600
+-- Pressure normalisation: running maximum starts here, adapts upwards when exceeded, never below the floor
+local STYLUS_PRESSURE_MAX_START = 4095
+local STYLUS_PRESSURE_MAX_FLOOR = 512
+-- Pressure -> width factor: width = base * (MIN + (1 - MIN) * p), clamped to >= 1px at render time
+local STYLUS_PRESSURE_MIN_FACTOR = 0.3
+-- Pen movement (px) before a non-brush tool treats the contact as a drag instead of a tap
+local STYLUS_TAP_SLOP = 6
+
 -- Tool settings persistence keys: written to the plugin directory (drawingpad_settings.lua) on exit, read automatically on next open.
 -- Only "drawing parameter" settings are persisted (grey/width/brush tip/font/font size/save folder):
 -- menu/button state settings (filled/outline, eraser mode, select move/copy, undo/redo, refresh/clear)
@@ -97,6 +116,8 @@ local SETTING_KEYS = {
     "alpha_blend",
     "tip", "save_folder",
     "font", "font_size",
+    -- Kobo fork (stylus.lua): pen pressure toggle, finger drawing mode ("auto"/"on"/"off"), PNG export folder ("" = default)
+    "pressure_sensitive", "finger_draw", "export_folder",
 }
 
 -- v62n: UI name tables use English as the single source (the UI is English-only)
@@ -217,6 +238,15 @@ return {
     PLUGIN_VERSION = PLUGIN_VERSION,
     PLUGIN_AUTHOR = PLUGIN_AUTHOR,
     SETTING_KEYS = SETTING_KEYS,
+    STYLUS_REFRESH_INTERVAL = STYLUS_REFRESH_INTERVAL,
+    STYLUS_LIVE_REFRESH_MODE = STYLUS_LIVE_REFRESH_MODE,
+    STYLUS_FINAL_REFRESH_MODE = STYLUS_FINAL_REFRESH_MODE,
+    STYLUS_CLIP_PAINT = STYLUS_CLIP_PAINT,
+    STYLUS_PALM_WINDOW_MS = STYLUS_PALM_WINDOW_MS,
+    STYLUS_PRESSURE_MAX_START = STYLUS_PRESSURE_MAX_START,
+    STYLUS_PRESSURE_MAX_FLOOR = STYLUS_PRESSURE_MAX_FLOOR,
+    STYLUS_PRESSURE_MIN_FACTOR = STYLUS_PRESSURE_MIN_FACTOR,
+    STYLUS_TAP_SLOP = STYLUS_TAP_SLOP,
     TOOL_NAMES = TOOL_NAMES,
     LAYER_NAMES = LAYER_NAMES,
     TIP_NAMES = TIP_NAMES,

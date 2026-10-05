@@ -11,6 +11,7 @@ methods from the feature modules are mixed in below:
 - layers.lua     layers
 - menus.lua      toolbar/status bar/centred popups/text/palette/save folder
 - actions.lua    undo/redo/clear/refresh/save/close
+- stylus.lua     Kobo stylus: pen strokes, pressure, palm rejection, rotation mapping (Kobo fork)
 
 Usage (same mounting approach as tools/wbuilder.lua):
     local DrawingCanvas = require("drawingpad.drawing_canvas")
@@ -83,6 +84,10 @@ local DrawingCanvas = InputContainer:extend{
     eraser_mode = "brush", -- eraser: brush=stroke erase (along the path) / rect=box erase (marquee) (long-press eraser to toggle)
     fill_mode = "tap",  -- fill: tap=tap-fill an enclosed area / path=brush outline, closes start to end and fills the interior (long-press to toggle)
     select_mode = "move",  -- select tool: move=move / copy=copy (long-press the select button to toggle)
+    -- Kobo fork (stylus.lua), persisted via const.SETTING_KEYS:
+    pressure_sensitive = true, -- pen pressure -> stroke width
+    finger_draw = "auto",      -- "auto" (off after the first pen event of the session) / "on" / "off"
+    export_folder = "",        -- PNG export folder ("" = DataStorage:getDataDir() .. "/drawingboard")
     -- Modal: unregistered gestures (swipe/hold etc.) don't pass through to the window below
     stop_events_propagation = true,
 }
@@ -326,6 +331,10 @@ function DrawingCanvas:paintTo(bb, x, y)
         self.dimen.x = x
         self.dimen.y = y
     end
+    -- Kobo fork: live pen stroke frames only re-blit the dirty rectangle (stylus.lua; falls through when not applicable)
+    if self._pen_clip_paint and self._stylusClipPaint and self:_stylusClipPaint(bb, x, y) then
+        return
+    end
     -- Canvas shown full-screen (coordinates = screen coordinates, top content visible; bottom covered by toolbar/status bar)
     bb:blitFrom(self.canvas_bb, x, y, 0, 0, self.canvas_w, self.canvas_h)
     if not self._minimized then
@@ -553,11 +562,15 @@ for _, mod in ipairs({
     require("drawingpad.layers"),
     require("drawingpad.menus"),
     require("drawingpad.actions"),
+    require("drawingpad.stylus"),
 }) do
     for name, fn in pairs(mod) do
         DrawingCanvas[name] = fn
     end
 end
+
+-- Kobo fork: palm rejection filter around the canvas gesture handlers (inside the pcall wrappers below)
+require("drawingpad.stylus").installFingerFilter(DrawingCanvas)
 
 -- Neither KOReader's event callbacks nor scheduleIn tasks are pcall-protected: any Lua error
 -- bubbles straight up and crashes the whole program (crash.log records the traceback). Wrap every entry-point callback in a pcall;
@@ -587,6 +600,7 @@ for _, name in ipairs({
     "_showCategoryMenu", "_refreshToolbar", "_showSettingDialog",
     "_refreshCanvas", "_pickSaveFolder", "_doSaveFlow", "_finishTransform",
     "_pickLayerAlpha",
+    "_toggleStylusPressure", "_cycleFingerDraw", "_pickExportFolder",
 }) do
     if DrawingCanvas[name] then
         DrawingCanvas[name] = wrapHandler(DrawingCanvas[name])
