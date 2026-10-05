@@ -211,7 +211,12 @@ function M:_save()
     local function folderLabel()
         local f = self.save_folder
         if f == "" then
-            return L.t("Folder: root")
+            -- Kobo fork: "root" of PNG export = the Export folder setting (default koreader/drawingboard)
+            if self.export_folder and self.export_folder ~= "" then
+                f = self.export_folder
+            else
+                return L.t("Folder: root")
+            end
         end
         if #f > 26 then
             f = "…" .. f:sub(-24) -- truncate long absolute paths for display (limited button space)
@@ -268,7 +273,8 @@ function M:_doSaveFlow(filename)
     end
     filename = filename .. ".png" -- append extension automatically
     local lfs = require("libs/libkoreader-lfs")
-    local base = DataStorage:getDataDir() .. "/drawingboard"
+    -- Kobo fork: PNG export root = the Export folder setting (default unchanged: koreader/drawingboard)
+    local base = self._exportFolder and self:_exportFolder() or (DataStorage:getDataDir() .. "/drawingboard")
     if lfs.attributes(base, "mode") ~= "directory" then
         pcall(lfs.mkdir, base)
     end
@@ -691,6 +697,14 @@ end
 
 -- Free the canvas BlitBuffer on close (pcall-protected so the close flow can't crash)
 function M:onCloseWidget()
+    -- Kobo fork: unregister the stylus callback and restore the input eventAdjustHook first, in its own pcall,
+    -- so nothing below can skip it (a leaked callback/hook would outlive the canvas)
+    if self._stylusDetach then
+        local ok_s, err_s = pcall(self._stylusDetach, self)
+        if not ok_s then
+            logger.warn("drawingpad: stylus detach error:", tostring(err_s))
+        end
+    end
     local ok, err = pcall(function()
         -- Close any category panel still open (exit button/physical Back and other close paths all pass through here,
         -- otherwise the panel stays in the window stack and the menu is left hanging on screen after the board closes)

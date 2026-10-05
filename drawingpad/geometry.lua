@@ -245,7 +245,7 @@ function M:_cloneElement(el)
         if k == "points" or k == "src_points" then
             local pts = {}
             for i, p in ipairs(v) do
-                pts[i] = { x = p.x, y = p.y }
+                pts[i] = { x = p.x, y = p.y, f = p.f } -- f = per-point pen width factor (Kobo fork, nil for finger strokes)
             end
             c[k] = pts
         elseif k == "spans" then
@@ -273,7 +273,7 @@ function M:_restoreGeom(el, snap)
         if k == "points" or k == "src_points" then
             local pts = {}
             for i, p in ipairs(v) do
-                pts[i] = { x = p.x, y = p.y }
+                pts[i] = { x = p.x, y = p.y, f = p.f } -- keep the pen width factor (Kobo fork)
             end
             el[k] = pts
         elseif k ~= "_bbox" then

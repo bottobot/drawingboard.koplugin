@@ -22,6 +22,17 @@ Changes compared with upstream:
 
 - **English-only UI**: the Chinese menu dictionary, the automatic language detection and the
   menu-language switch were removed; `README_zh.md` was dropped.
+- **Kobo stylus support** (Kobo Libra Colour + Kobo Stylus 2, KOReader 2026.07 or newer with
+  `Input:registerStylusCallback`; older KOReader keeps treating the pen as a finger), in `drawingpad/stylus.lua`:
+  - the pen draws through the normal stroke pipeline (all brushes, layers, undo, opacity, blend modes) and drives
+    every other tool (shapes, select, text, fill) like a finger would;
+  - holding the pen's side button erases (the existing eraser, for that stroke only);
+  - **Pressure sensitivity** (Options, default on): stroke width follows pen pressure (30 % to 100 % of the width);
+  - **Finger drawing** (Options, default *auto*): palm rejection. In *auto*, the first pen event of a session turns
+    finger drawing on the canvas off (toolbar and menus still react to fingers); finger gestures on the canvas are
+    also ignored for 600 ms after any pen activity;
+  - live pen strokes refresh only their dirty rectangle with the fast waveform, then the stroke once with `ui`;
+  - **Export folder** (Options): folder for exported PNGs (default `koreader/drawingboard/`).
 
 ## Screenshots
 
