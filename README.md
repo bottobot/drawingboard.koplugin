@@ -113,7 +113,9 @@ Keep the pen away from the screen briefly before trying a canvas finger gesture:
 
 **Save before opening another project or exiting.** There is no automatic project recovery. Opening a project replaces the current canvas and clears undo/redo; the Open path currently does not prompt to save the drawing it replaces. A PNG is flattened and cannot restore editable objects through the project's Open command.
 
-**Only open `.drawing` files you created or trust.** The current format is Lua source, and the loader executes it with KOReader's privileges. It is not a safe interchange format for untrusted downloads. Prefer PNG when sharing artwork until the loader uses a data-only parser. See [release blockers](docs/TESTING.md#known-release-blockers).
+**Project files are parsed as data, never executed as Lua.** The reader accepts the literal `return {...}` format written by upstream v62/v63, including escaped text and pen-pressure values. Calls, functions, expressions, comments, and trailing statements are rejected. Invalid projects leave the drawing and undo history intact. Imports are limited to 8 MiB, 16 table levels, 500,000 entries, and validated layer/element geometry; unusually large or hand-edited files may be rejected. See [project storage fixes](docs/TESTING.md#project-storage-fixes).
+
+**A failed project save preserves an existing destination.** Saves use a newly acquired sibling temporary directory, check write and close results and the resulting file size, then rename the complete file into place. Failure reports cover permissions, storage, incomplete writes, and rename errors. Completed saves do not promise power-loss durability. A crash may leave a `.saving-*` directory alongside the destination; retain its `project.tmp` for recovery before removing it.
 
 ## Upgrade, rollback, and removal
 
@@ -134,14 +136,14 @@ Do not leave multiple active copies with different folder names in `plugins/`; t
 | Pen coordinates are displaced or rotated | Record the device, KOReader build, orientation, and minimal reproduction. Try a fresh board after changing orientation. Rotation needs physical validation for each device. |
 | Export says the canvas is empty despite visible content | The PNG entry point currently checks the active layer. Select a layer containing content before exporting; this is a known issue. |
 | Export goes to an unexpected folder | An explicit save-dialog folder overrides the PNG default. Reselect **Export folder** to clear that override, then inspect the destination. |
-| Save fails or a project will not reopen | Check free storage and permissions, retain the original, and use another filename. A successful save message is not yet a full project integrity check. |
+| Save fails or a project will not reopen | Check free storage and permissions, retain the original, and use another filename. The project writer now rejects write/close errors and incomplete files. Keep backups for device or power failures. |
 | Ghosting after drawing | Use the board's refresh control. Appearance and latency depend on the device and need physical testing. |
 
 Use [this fork's issue tracker](https://github.com/bottobot/drawingboard.koplugin/issues) for fork issues. Include branch/commit, KOReader build, device/pen model, orientation, settings, expected behaviour, and reproduction steps. Inspect and redact logs/settings before attaching them: they can contain paths and entered text. Do not post complete KOReader settings or personal projects by default.
 
 ## Development and testing
 
-[TESTING.md](docs/TESTING.md) covers dependencies, commands, missing stylus coverage, physical acceptance, and release blockers. In an isolated KOReader v2026.07.1 runtime on 2026-10-11, **all 20 existing test scripts passed** after correcting an inherited stale brush-tip menu assertion. The feature test explicitly skipped grey-menu assertions that could not run headlessly; pen hardware remains unvalidated. Tests require KOReader's LuaJIT, `setupkoenv`, frontend modules, and native libraries; **plain standalone `lua` is insufficient**.
+[TESTING.md](docs/TESTING.md) covers dependencies, commands, missing stylus coverage, physical acceptance, and release blockers. In an isolated KOReader v2026.07.1 runtime on 2026-10-11, **all 21 regression scripts passed**, including 15 new project-safety sections covering non-executing imports, canvas preservation, and injected save failures. The feature test explicitly skipped grey-menu assertions that could not run headlessly; pen hardware remains unvalidated. Tests require KOReader's LuaJIT, `setupkoenv`, frontend modules, and native libraries; **plain standalone `lua` is insufficient**.
 
 For the source map, upstream comparison, and contribution workflow, see [FORK.md](docs/FORK.md).
 
@@ -149,6 +151,6 @@ For the source map, upstream comparison, and contribution workflow, see [FORK.md
 
 Distributed under the [GNU Affero General Public License, version 3](LICENSE), retaining the upstream license. Original Drawingboard work is by [eznas](https://github.com/eznas/drawingboard.koplugin); fork changes are maintained in [bottobot/drawingboard.koplugin](https://github.com/bottobot/drawingboard.koplugin).
 
-**Notice of modification:** this version was modified on 2026-10-04 for translated comments, English UI, Kobo stylus input, and plugin metadata. Documentation and an inherited brush-tip menu test assertion were updated on 2026-10-11. See [NOTICE](NOTICE) and [commit history](docs/FORK.md#provenance).
+**Notice of modification:** this version was modified on 2026-10-04 for translated comments, English UI, Kobo stylus input, and plugin metadata. Documentation, an inherited test assertion, and project-file loading/saving were updated on 2026-10-11. See [NOTICE](NOTICE) and [commit history](docs/FORK.md#provenance).
 
 The `drawingpad/icons/appbar.menu.svg` and `drawingpad/icons/cre.render.reload.svg` icons come from KOReader's official icon set under AGPL-3.0, as credited by upstream. Other icons and demonstration assets are retained from upstream. No separate artwork license or creator record is supplied here beyond the upstream material; preserve attribution when redistributing it.

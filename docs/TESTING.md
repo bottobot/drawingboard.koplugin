@@ -1,8 +1,8 @@
 # Testing and release checks
 
 This page distinguishes successful test-script results from complete coverage,
-and emulator results from physical e-ink acceptance. All 20 existing regression
-scripts now pass, with an explicit headless UI skip; no physical-device
+and emulator results from physical e-ink acceptance. All 21 regression scripts
+now pass, with an explicit headless UI skip; no physical-device
 certification is claimed.
 
 ## Recorded status
@@ -13,7 +13,7 @@ documentation pass statically checked provenance, installation, runtime entry
 points, persistence, and dependencies. An independent validation pass ran the
 existing tests and bounded persistence fixtures inside an isolated runtime,
 then reran the affected feature test after the assertion-only correction
-described below. Production source is unchanged from that commit. Neither pass
+described below. Those initial results preceded the project-storage fixes below. Neither pass
 changed an attached device. There is no stylus-specific regression test or dated
 physical acceptance record.
 
@@ -62,6 +62,47 @@ wall time for the sandbox, and 20 seconds per test subprocess. These describe
 the performed run; the example commands below still require an equivalent
 isolated environment.
 
+## Project storage fixes
+
+On 2026-10-11, the Kobo fork replaced project-file execution with a literal-data
+parser and checked atomic saves. A fresh isolated run executed all **21**
+`*_test.lua` scripts successfully against the changed source. The existing
+project test still passes both roundtrip/corrupt-file sections; the new
+`project_safety_test.lua` passes **15** sections. The grey-menu assertion block
+still skips in the headless feature test. Pen/device acceptance remains open.
+
+The regressions cover legacy literals and escaped strings, retained pressure
+values, rejection of code/functions/expressions/trailing statements, parser
+limits and invalid element schemas, preservation of canvas/visibility/undo on
+rejected imports, successful project readback, failure propagation into the save
+UI, and preservation of an existing file after injected open, write, close,
+short-write, and rename failures. Both ordinary `nil, error` returns and thrown
+write/close failures are exercised. Temporary paths are cleaned after success
+and failure; a pre-existing temporary path is neither used nor removed.
+
+The parser accepts only upstream-generated literal data; it never calls
+`loadfile`, `loadstring`, or a project-supplied function. Files over 8 MiB,
+nesting beyond 16 table levels, more than 500,000 entries, invalid layers,
+unknown element kinds, and unsupported geometry are rejected before current
+state is changed. Limits include 10,000 elements overall, 32,768-pixel coordinate
+magnitudes, 800-pixel stroke/font sizes, and bounded text/points/fill spans.
+The text extent is prepared before import to bound native buffer allocations.
+These are import limits, not a claim that every possible malformed input or
+renderer behavior has been exhaustively tested.
+
+The writer uses an atomically acquired sibling directory and a complete
+`project.tmp`; it checks the write return, close return, and byte count before
+renaming it to the requested destination. It preserves the old destination on
+failure. This does not add an `fsync`/power-loss durability guarantee. A process
+crash can leave a `.saving-*` directory with recoverable temporary data.
+The on-disk format remains compatible with the literal files produced by
+upstream v62/v63; files using arbitrary Lua or manual expressions are rejected.
+
+The fresh run used the same pinned native runtime and OS sandbox limits
+described above, with a 45-second timeout for each test subprocess, exposing
+only read-only plugin/runtime/toolchain paths and scratch data.
+No actual Kobo, user settings, live filesystem fault, or network was exercised.
+
 ## Runtime and test dependencies
 
 The scripts in `drawingpad/test/` require a complete compatible KOReader runtime:
@@ -91,6 +132,7 @@ plugin at `plugins/drawingboard.koplugin/` and the current directory containing
 ```sh
 ./luajit plugins/drawingboard.koplugin/drawingpad/test/feature_test.lua
 ./luajit plugins/drawingboard.koplugin/drawingpad/test/project_test.lua
+./luajit plugins/drawingboard.koplugin/drawingpad/test/project_safety_test.lua
 ./luajit plugins/drawingboard.koplugin/drawingpad/test/alpha_test.lua
 ./luajit plugins/drawingboard.koplugin/drawingpad/test/blend_mode_test.lua
 ./luajit plugins/drawingboard.koplugin/drawingpad/test/layer_zorder_test.lua
@@ -145,13 +187,13 @@ similar device or an emulator.
 
 ## Known release blockers
 
-These observations apply to `87219fa`; recheck them after source changes.
-This is not a comprehensive security audit. Documentation does not fix code.
+Project execution and unchecked project writes are fixed as recorded above.
+The following remaining observations were identified during the earlier review
+and have not been addressed by the storage patch. This is not a comprehensive
+security audit.
 
 | Issue | Source and consequence | Acceptance for a fix |
 | --- | --- | --- |
-| Executable projects | `drawingpad/actions.lua`, `_loadProject`: `loadfile(path)` then `pcall(chunk)` executes an opened `.drawing` with ordinary globals. An externally supplied project can act with KOReader privileges before format checks. Confirmed by a scratch-only marker fixture. | Use a data-only parser or constrained legacy decoder that cannot execute arbitrary Lua; bound size/schema/resources before replacing state. A minimal malicious local fixture must be rejected without side effects. |
-| Unchecked project writes | `_doSaveProject` ignores failure returns from `write`/`close`; injected failure fixtures confirmed it can report success for an incomplete file. | Check both results, report failure, preserve prior valid data, and exercise injected failures with dummy fixtures. |
 | Opening replaces unsaved work | `_openProject` calls `_loadProject` without a save confirmation; loading clears layers and undo state. | Prompt before replacing dirty content and validate into temporary state. Cancelled/invalid opens must preserve the drawing. |
 | Export checks only the active layer | `_save` rejects `#self.elements == 0`, although export renders the visible canvas. Other visible layers can contain art. | Check all visible layers; test blank active layer plus content elsewhere. |
 | Pen validation is absent | No direct `stylus.lua` regression coverage or physical acceptance record in this revision. | Add lifecycle/pressure/palm tests and an accurate device/build acceptance matrix. |

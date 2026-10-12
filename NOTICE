@@ -16,6 +16,11 @@ the deprecated metadata name field.
 claims, provenance, and testing/release guidance; corrected the inherited
 brush-tip menu regression assertion to match the seven-button menu and
 outside-tap dismissal introduced upstream in v62t.
+2026-10-11: replaced execution of .drawing files with a bounded literal-data
+parser; validate and prepare imports before changing the current drawing;
+check project write/close/size/rename failures using a sibling temporary file;
+added project-safety regression fixtures. The upstream literal file format,
+author credit, Git ancestry, and AGPL-3.0 license are retained.
 
 The kobo-stylus branch is the modified fork. The v63 tag identifies the
 upstream base, not a separately validated fork release.

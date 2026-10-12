@@ -49,8 +49,10 @@ All four implementation commits are dated 2026-10-04:
 The 2026-10-11 maintenance work clarifies these changes and limits and corrects
 an inherited regression-test assertion: the brush-tip menu has seven tip buttons
 and dismisses on an outside tap, whereas the test still counted a removed cancel
-button. This test correction changes no production behaviour. The work does not
-establish device acceptance or turn inherited tests into stylus coverage.
+button. The test correction changed no production behaviour. Subsequent maintenance
+on the same date adds a bounded, non-executing project parser and checked,
+atomic project saves. These fixes retain the upstream literal file format
+and license. They do not establish physical-device acceptance or stylus coverage.
 
 ## Code map
 
@@ -62,7 +64,8 @@ establish device acceptance or turn inherited tests into stylus coverage.
 | `drawingpad/strokes.lua` | Shared freehand pipeline, optional point-width factor, refresh hooks. |
 | `drawingpad/shapes.lua` | Rendering, including pressure-derived point widths. |
 | `drawingpad/const.lua` | Pressure limits, palm window, refresh parameters, persisted setting names, inherited version/author. |
-| `drawingpad/actions.lua` | Undo/redo, PNG export, project persistence, preferences, close cleanup. |
+| `drawingpad/actions.lua` | Undo/redo, PNG export, prepared project loading, preferences, close cleanup. |
+| `drawingpad/projectfile.lua` | Literal-data parser, bounds/schema checks, checked atomic project-file writing. |
 | `drawingpad/menus.lua` | Tool/property/function panels and folder navigation. |
 | `drawingpad/i18n.lua` | English identity helpers replacing the translation dictionary. |
 | `drawingpad/test/` | Inherited rendering/UI/project regression scripts and benchmarks. |
