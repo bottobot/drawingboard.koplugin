@@ -1,0 +1,27 @@
+Drawingboard for KOReader — Kobo stylus fork
+
+Upstream: https://github.com/eznas/drawingboard.koplugin
+Fork: https://github.com/bottobot/drawingboard.koplugin
+License: GNU Affero General Public License, version 3; see LICENSE.
+
+The drawing engine and original plugin are upstream work by eznas. This
+repository preserves that ancestry and credits the original author.
+
+Notice of modification:
+2026-10-04: translated comments; removed the Chinese UI dictionary, language
+selection, and Chinese README; added Kobo stylus integration, pressure-aware
+strokes, finger-drawing controls, and a PNG export-folder setting; removed
+the deprecated metadata name field.
+2026-10-11: revised fork documentation, installation guidance, compatibility
+claims, provenance, and testing/release guidance; corrected the inherited
+brush-tip menu regression assertion to match the seven-button menu and
+outside-tap dismissal introduced upstream in v62t.
+
+The kobo-stylus branch is the modified fork. The v63 tag identifies the
+upstream base, not a separately validated fork release.
+
+Two bundled icons, drawingpad/icons/appbar.menu.svg and
+drawingpad/icons/cre.render.reload.svg, are from the official KOReader icon
+set (AGPL-3.0), as acknowledged by upstream. Other bundled icons and demo
+assets are retained from upstream. This notice adds no new license grant
+for third-party material and does not replace LICENSE.

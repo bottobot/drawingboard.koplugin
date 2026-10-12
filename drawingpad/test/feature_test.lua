@@ -762,7 +762,7 @@ do
         canvas:onSwipe(nil, { pos = { x = 100, y = 500 }, end_pos = { x = 200, y = 550 } })
         check(canvas.elements[3].tip == nil or canvas.elements[3].tip == "circle",
             "rect should keep circle tip")
-        -- Tip menu construction (7 rows of preview + button + 1 cancel; taps go through the native Button's own gestures)
+        -- Tip menu: 7 preview/button rows; since v62t, tap outside to close (no Cancel button).
         local const = require("drawingpad.const")
         local UIManager = require("ui/uimanager")
         local orig_show = UIManager.show
@@ -783,7 +783,7 @@ do
                 for i = 1, math.min(#w, 20) do walk(w[i], depth + 1) end
             end
             walk(captured, 0)
-            check(#btns >= 8, "tip menu should have 7 tip buttons + cancel, got " .. #btns)
+            check(#btns == 7, "tip menu should have 7 tip buttons (tap outside to close), got " .. #btns)
             check(#previews >= 7, "tip menu should show 7 shape previews, got " .. #previews)
             -- Fire the first tip button callback and confirm canvas.tip is set
             pcall(function() btns[1].callback() end)
