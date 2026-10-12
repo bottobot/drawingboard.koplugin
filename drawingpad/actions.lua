@@ -9,6 +9,7 @@ local InputDialog = require("ui/widget/inputdialog")
 local logger = require("logger")
 local components = require("drawingpad.components")
 local const = require("drawingpad.const")
+local ProjectFile = require("drawingpad.projectfile")
 local L = require("drawingpad.i18n")
 local _ = require("gettext")
 
@@ -364,7 +365,8 @@ function M:_doSave(path)
 end
 
 -- ============================ Project file (re-editable) save/open ============================
--- v62d: elements are all plain data tables; serialised as a Lua chunk ("return {...}") they form the project file (.drawing):
+-- v62d format retained: elements are plain data tables, encoded as literal "return {...}" data.
+-- Kobo fork: the reader parses these literals without compiling or executing Lua.
 -- 3 layers of elements + visibility/opacity/current layer. Reopening restores the objects, which can still be moved/transformed/edited/undone.
 
 -- Recursive serialisation (handles only number/boolean/string/table; private fields starting with underscore such as _bbox are skipped,
@@ -394,7 +396,8 @@ local function serializeValue(v, out)
     end
 end
 
--- Serialise and write the .drawing file (small synchronous text write, pcall guards against permissions/busy SD)
+-- Keep upstream's literal project format, but validate and commit atomically.
+-- A failed write/close/rename leaves an existing project intact.
 function M:_doSaveProject(path)
     local data = {
         version = 1,
@@ -403,21 +406,17 @@ function M:_doSaveProject(path)
         layer_alpha = self.layer_alpha,
         layers = self.layers,
     }
-    local out = { "return " }
-    serializeValue(data, out)
-    out[#out + 1] = "\n"
-    local ok, err = pcall(function()
-        local f = io.open(path, "w")
-        if not f then
-            error("cannot open " .. path)
-        end
-        f:write(table.concat(out))
-        f:close()
+    local ok, saved, err = pcall(function()
+        local out = { "return " }
+        serializeValue(data, out)
+        out[#out + 1] = "\n"
+        return ProjectFile.write(path, table.concat(out))
     end)
-    if not ok then
-        self:_log("save project failed", path, tostring(err))
+    if not ok or not saved then
+        self:_log("save project failed", path, tostring(ok and err or saved))
+        return false
     end
-    return ok
+    return true
 end
 
 -- Save project: dialog (filename + folder); on confirm, write the .drawing file
@@ -508,7 +507,7 @@ function M:_doSaveProjectFlow(filename)
         components.showToast(L.x("Saved:") .. "\n" .. path, 4)
         self:_log("project saved", path)
     else
-        components.showToast(L.x("Save failed, check folder permission:") .. "\n" .. dir, 4)
+        components.showToast("Save failed. Check free space and folder permissions; the previous file was preserved.\n" .. dir, 4)
     end
 end
 
@@ -524,22 +523,31 @@ end
 -- Load .drawing: clear the three layers' elements/undo/redo in place and then insert (keeps the binding to layers_*;
 -- v61p lesson: swapping in new tables breaks the binding), restore visibility/opacity/current layer, full redraw
 function M:_loadProject(path)
-    local lfs = require("libs/libkoreader-lfs")
-    if lfs.attributes(path, "mode") ~= "file" then
-        components.showToast(L.x("File not found:") .. "\n" .. path, 3)
-        return
+    local ok, data, err = pcall(ProjectFile.read, path)
+    if not ok or not data then
+        components.showToast(L.x("Corrupt or unsupported project file:") .. "\n" .. path, 3)
+        self:_log("load project rejected", path, tostring(ok and err or data))
+        return false
     end
-    local chunk_ok, chunk = pcall(loadfile, path)
-    if not chunk_ok or type(chunk) ~= "function" then
-        components.showToast(L.x("Corrupt project file:") .. "\n" .. path, 3)
-        self:_log("load project: loadfile failed", path, tostring(chunk))
-        return
-    end
-    local ok, data = pcall(chunk)
-    if not ok or type(data) ~= "table" or type(data.layers) ~= "table" then
-        components.showToast(L.x("Corrupt project file:") .. "\n" .. path, 3)
-        self:_log("load project: bad data", path)
-        return
+    -- Prepare every element before touching the canvas, layers or undo history.
+    -- A corrupt later layer must not partially replace the current drawing.
+    local prepared, problem = pcall(function()
+        for li = 1, 3 do
+            for _, el in ipairs(data.layers[li]) do
+                local box = self:_cacheBBox(el)
+                if el.kind == "text" and box then
+                    local w, h = box.x1 - box.x0, box.y1 - box.y0
+                    if w > 8192 or h > 8192 or w * h > 16 * 1024 * 1024 then
+                        error("project text extent too large")
+                    end
+                end
+            end
+        end
+    end)
+    if not prepared then
+        components.showToast(L.x("Corrupt or unsupported project file:") .. "\n" .. path, 3)
+        self:_log("load project preparation failed", path, tostring(problem))
+        return false
     end
     for li = 1, 3 do
         local els = self.layers[li]
@@ -555,25 +563,12 @@ function M:_loadProject(path)
             red[i] = nil
         end
         for _, el in ipairs(data.layers[li] or {}) do
-            if type(el) == "table" and type(el.kind) == "string" then
-                el._bbox = nil -- private fields aren't serialised; recomputed after loading
-                table.insert(els, el)
-                self:_cacheBBox(el)
-            end
+            table.insert(els, el) -- validated and bbox-prepared above
         end
     end
-    local function copy3(src, default)
-        local out = { true, true, true }
-        if type(src) == "table" then
-            for i = 1, 3 do
-                out[i] = (src[i] == nil) and default or src[i]
-            end
-        end
-        return out
-    end
-    self.layer_visible = copy3(data.layer_visible, true)
-    self.layer_alpha = copy3(data.layer_alpha, 1.0)
-    local n = math.max(1, math.min(3, math.floor(tonumber(data.active_layer) or 2)))
+    self.layer_visible = data.layer_visible
+    self.layer_alpha = data.layer_alpha
+    local n = data.active_layer
     self.active_layer = n
     self.elements = self.layers[n]
     self.undo = self.layers_undo[n]
@@ -595,6 +590,7 @@ function M:_loadProject(path)
     UIManager:setDirty(self, "full")
     components.showToast(L.x("Opened:") .. "\n" .. path, 3)
     self:_log("project loaded", path)
+    return true
 end
 
 -- ============================ Settings persistence ============================
