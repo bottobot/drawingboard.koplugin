@@ -580,6 +580,8 @@ local function wrapHandler(orig)
         local ok, err = pcall(orig, self, ...)
         if not ok then
             self:_log("handler error:", tostring(err))
+            -- Always reach crash.log: a handler failing the same way every time looks like a freeze
+            logger.warn("drawingpad handler error:", tostring(err))
         end
         return true
     end

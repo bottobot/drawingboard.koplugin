@@ -114,6 +114,7 @@ function M.newModal(opts)
         local ok, res = pcall(orig_handle, self, ev)
         if not ok then
             log(opts, "modal handleEvent error:", tostring(res))
+            require("logger").warn("drawingpad modal handleEvent error:", tostring(res))
             return true
         end
         return res
